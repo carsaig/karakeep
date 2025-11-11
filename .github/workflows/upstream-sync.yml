@@ -86,7 +86,7 @@ jobs:
         run: |
           echo "changed=${{ steps.prep.outputs.changed }}" >> "$GITHUB_OUTPUT"
 
-      - name: Configure PAT for workflow-file pushes (optional)
+      - name: Configure PAT authentication
         if: steps.diffcheck.outputs.changed == 'true'
         env:
           GH_PAT: ${{ secrets.GHCR_PAT }}
@@ -99,7 +99,8 @@ jobs:
             git remote set-url origin "https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.git"
             echo "Using GHCR_PAT for push"
           else
-            echo "GHCR_PAT not set; will use GITHUB_TOKEN. If push rejects workflow changes, ensure PAT has repo scope or strip workflows from sync." >&2
+            echo "ERROR: GHCR_PAT not configured. Cannot push workflow file changes." >&2
+            exit 1
           fi
 
       - name: Push sync branch
