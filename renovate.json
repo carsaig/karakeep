@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base"
+  ],
+  "includeForks": true,
+  "forkProcessing": "enabled",
+  "onboarding": false,
+  "requireConfig": "optional",
+  "dependencyDashboard": false,
+  "timezone": "Europe/Vienna",
+  "prConcurrentLimit": 2,
+  "prHourlyLimit": 1,
+  "enabledManagers": [],
+  "includePaths": [
+    ".github/workflows/ai-rules-first-run.yml",
+    ".github/workflows/ai-rules.yml",
+    ".github/workflows/coolify.yml",
+    ".github/workflows/test-coolify-webhook.yml",
+    ".github/workflows/upstream-sync.yml"
+  ],
+  "packageRules": [
+    {
+      "description": "Enable GitHub Actions for specific files only",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [
+        ".github/workflows/ai-rules-first-run.yml",
+        ".github/workflows/ai-rules.yml",
+        ".github/workflows/coolify.yml",
+        ".github/workflows/test-coolify-webhook.yml",
+        ".github/workflows/upstream-sync.yml"
+      ],
+      "enabled": true
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": false
+  }
+}

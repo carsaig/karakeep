@@ -1,0 +1,157 @@
+name: Build and Deploy to Coolify
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      # Ignore config-only changes - only build on actual code changes
+      - 'docker/docker-compose*.yml'
+      - '*.md'
+      - 'docs/**'
+      - '.github/**'
+      - 'README*'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.env.sample'
+  
+  workflow_dispatch:  # Manual trigger for major updates
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/carsaig/karakeep  # YOUR image, not upstream
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get latest release version
+        id: version
+        run: |
+          # Get the latest release tag from GitHub and strip the 'v' prefix
+          LATEST_TAG=$(curl -s https://api.github.com/repos/karakeep-app/karakeep/releases/latest | jq -r .tag_name | sed 's/^v//')
+          echo "version=${LATEST_TAG}" >> $GITHUB_OUTPUT
+          echo "Latest version: ${LATEST_TAG}"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.version }},enable={{is_default_branch}}
+            type=raw,value=release,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          target: aio
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SERVER_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Summary
+        run: |
+          echo "## ✅ Docker Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platform:** linux/arm64 only" >> $GITHUB_STEP_SUMMARY
+          echo "**Digest:** \`${{ steps.build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+
+  notify-deployment:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: success()
+
+    steps:
+      - name: Load Coolify secrets from 1Password
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          COOLIFY_WEBHOOK_URL: op://SECRETS/Karakeep/WEBHOOK
+          COOLIFY_DEPLOYMENT_TOKEN: op://SECRETS/Karakeep/DEPLOYMENT_TOKEN
+          COOLIFY_BASE_URL: op://SECRETS/Coolify/BASE_URL
+          COOLIFY_APPLICATION_UUID: op://SECRETS/Karakeep/APPLICATION_UUID
+
+      - name: Update Coolify Environment Variables
+        run: |
+          echo "## 🔧 Updating Coolify Environment Variables" >> $GITHUB_STEP_SUMMARY
+          echo "**Updating SERVER_VERSION to:** \`${{ needs.build-and-push.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+
+          # Update SERVER_VERSION environment variable in Coolify using bulk update endpoint
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
+            -X PATCH "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs/bulk" \
+            -H "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "data": [{
+                "key": "SERVER_VERSION",
+                "value": "${{ needs.build-and-push.outputs.version }}",
+                "is_preview": false
+              }]
+            }')
+
+          # Extract HTTP code and check response
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d')
+
+          echo "API Response Code: $HTTP_CODE"
+          echo "API Response Body: $RESPONSE_BODY"
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Environment variable SERVER_VERSION updated successfully to ${{ needs.build-and-push.outputs.version }}"
+          else
+            echo "❌ Failed to update environment variable. HTTP Code: $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+
+
+
+      - name: Trigger Coolify Deployment
+        run: |
+          echo "## 🚀 Triggering Coolify Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Version:** \`${{ needs.build-and-push.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Digest:** \`${{ needs.build-and-push.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment will begin shortly...**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Trigger Coolify Deployment via Webhook
+        run: |
+          curl --request GET "$COOLIFY_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN"
+          echo "✅ Coolify webhook triggered successfully"
