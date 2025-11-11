@@ -115,6 +115,7 @@ jobs:
         if: steps.diffcheck.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ env.GITHUB_PAT }}
           base: ${{ github.event.repository.default_branch }}
           branch: ${{ steps.prep.outputs.branch }}
           title: "chore: sync upstream release ${{ steps.latest.outputs.tag }}"
@@ -132,5 +133,6 @@ jobs:
         if: steps.diffcheck.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number && steps.cpr.outputs.pull-request-number != ''
         uses: peter-evans/enable-pull-request-automerge@v3
         with:
+          token: ${{ env.GITHUB_PAT }}
           pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
           merge-method: squash
