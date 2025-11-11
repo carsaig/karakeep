@@ -12,6 +12,8 @@ import DOMPurify from "dompurify";
 import { eq } from "drizzle-orm";
 import { execa } from "execa";
 import { exitAbortController } from "exit";
+import { HttpProxyAgent } from "http-proxy-agent";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { JSDOM, VirtualConsole } from "jsdom";
 import metascraper from "metascraper";
 import metascraperAmazon from "metascraper-amazon";
@@ -25,10 +27,15 @@ import metascraperTitle from "metascraper-title";
 import metascraperTwitter from "metascraper-twitter";
 import metascraperUrl from "metascraper-url";
 import { workerStatsCounter } from "metrics";
+import {
+  fetchWithProxy,
+  getRandomProxy,
+  matchesNoProxy,
+  validateUrl,
+} from "network";
 import { Browser, BrowserContextOptions } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { fetchWithProxy } from "utils";
 import { getBookmarkDetails, updateAsset } from "workerUtils";
 import { z } from "zod";
 
@@ -124,7 +131,18 @@ const metascraperParser = metascraper([
   metascraperDescription(),
   metascraperTwitter(),
   metascraperImage(),
-  metascraperLogo(),
+  metascraperLogo({
+    gotOpts: {
+      agent: {
+        http: serverConfig.proxy.httpProxy
+          ? new HttpProxyAgent(getRandomProxy(serverConfig.proxy.httpProxy))
+          : undefined,
+        https: serverConfig.proxy.httpsProxy
+          ? new HttpsProxyAgent(getRandomProxy(serverConfig.proxy.httpsProxy))
+          : undefined,
+      },
+    },
+  }),
   metascraperUrl(),
 ]);
 
@@ -160,19 +178,20 @@ function getPlaywrightProxyConfig(): BrowserContextOptions["proxy"] {
   }
 
   // Use HTTPS proxy if available, otherwise fall back to HTTP proxy
-  const proxyUrl = proxy.httpsProxy || proxy.httpProxy;
-  if (!proxyUrl) {
+  const proxyList = proxy.httpsProxy || proxy.httpProxy;
+  if (!proxyList) {
     // Unreachable, but TypeScript doesn't know that
     return undefined;
   }
 
+  const proxyUrl = getRandomProxy(proxyList);
   const parsed = new URL(proxyUrl);
 
   return {
     server: proxyUrl,
     username: parsed.username,
     password: parsed.password,
-    bypass: proxy.noProxy,
+    bypass: proxy.noProxy?.join(","),
   };
 }
 
@@ -354,22 +373,6 @@ async function changeBookmarkStatus(
     .where(eq(bookmarkLinks.id, bookmarkId));
 }
 
-/**
- * This provides some "basic" protection from malicious URLs. However, all of those
- * can be easily circumvented by pointing dns of origin to localhost, or with
- * redirects.
- */
-function validateUrl(url: string) {
-  const urlParsed = new URL(url);
-  if (urlParsed.protocol != "http:" && urlParsed.protocol != "https:") {
-    throw new Error(`Unsupported URL protocol: ${urlParsed.protocol}`);
-  }
-
-  if (["localhost", "127.0.0.1", "0.0.0.0"].includes(urlParsed.hostname)) {
-    throw new Error(`Link hostname rejected: ${urlParsed.hostname}`);
-  }
-}
-
 async function browserlessCrawlPage(
   jobId: string,
   url: string,
@@ -429,11 +432,15 @@ async function crawlPage(
     return browserlessCrawlPage(jobId, url, abortSignal);
   }
 
+  const proxyConfig = getPlaywrightProxyConfig();
+  const isRunningInProxyContext =
+    proxyConfig !== undefined &&
+    !matchesNoProxy(url, proxyConfig.bypass?.split(",") ?? []);
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    proxy: getPlaywrightProxyConfig(),
+    proxy: proxyConfig,
   });
 
   try {
@@ -452,8 +459,12 @@ async function crawlPage(
       await globalBlocker.enableBlockingInPage(page);
     }
 
-    // Block audio/video resources
-    await page.route("**/*", (route) => {
+    // Block audio/video resources and disallowed sub-requests
+    await page.route("**/*", async (route) => {
+      if (abortSignal.aborted) {
+        await route.abort("aborted");
+        return;
+      }
       const request = route.request();
       const resourceType = request.resourceType();
 
@@ -463,18 +474,49 @@ async function crawlPage(
         request.headers()["content-type"]?.includes("video/") ||
         request.headers()["content-type"]?.includes("audio/")
       ) {
-        route.abort();
+        await route.abort("aborted");
         return;
       }
 
+      const requestUrl = request.url();
+      const requestIsRunningInProxyContext =
+        proxyConfig !== undefined &&
+        !matchesNoProxy(requestUrl, proxyConfig.bypass?.split(",") ?? []);
+      if (
+        requestUrl.startsWith("http://") ||
+        requestUrl.startsWith("https://")
+      ) {
+        const validation = await validateUrl(
+          requestUrl,
+          requestIsRunningInProxyContext,
+        );
+        if (!validation.ok) {
+          logger.warn(
+            `[Crawler][${jobId}] Blocking sub-request to disallowed URL "${requestUrl}": ${validation.reason}`,
+          );
+          await route.abort("blockedbyclient");
+          return;
+        }
+      }
+
       // Continue with other requests
-      route.continue();
+      await route.continue();
     });
 
     // Navigate to the target URL
-    logger.info(`[Crawler][${jobId}] Navigating to "${url}"`);
+    const navigationValidation = await validateUrl(
+      url,
+      isRunningInProxyContext,
+    );
+    if (!navigationValidation.ok) {
+      throw new Error(
+        `Disallowed navigation target "${url}": ${navigationValidation.reason}`,
+      );
+    }
+    const targetUrl = navigationValidation.url.toString();
+    logger.info(`[Crawler][${jobId}] Navigating to "${targetUrl}"`);
     const response = await Promise.race([
-      page.goto(url, {
+      page.goto(targetUrl, {
         timeout: serverConfig.crawler.navigateTimeoutSec * 1000,
         waitUntil: "domcontentloaded",
       }),
@@ -482,7 +524,7 @@ async function crawlPage(
     ]);
 
     logger.info(
-      `[Crawler][${jobId}] Successfully navigated to "${url}". Waiting for the page to load ...`,
+      `[Crawler][${jobId}] Successfully navigated to "${targetUrl}". Waiting for the page to load ...`,
     );
 
     // Wait until network is relatively idle or timeout after 5 seconds
@@ -583,20 +625,30 @@ function extractReadableContent(
   );
   const virtualConsole = new VirtualConsole();
   const dom = new JSDOM(htmlContent, { url, virtualConsole });
-  const readableContent = new Readability(dom.window.document).parse();
-  if (!readableContent || typeof readableContent.content !== "string") {
-    return null;
+  let result: { content: string } | null = null;
+  try {
+    const readableContent = new Readability(dom.window.document).parse();
+    if (!readableContent || typeof readableContent.content !== "string") {
+      return null;
+    }
+
+    const purifyWindow = new JSDOM("").window;
+    try {
+      const purify = DOMPurify(purifyWindow);
+      const purifiedHTML = purify.sanitize(readableContent.content);
+
+      logger.info(`[Crawler][${jobId}] Done extracting readable content.`);
+      result = {
+        content: purifiedHTML,
+      };
+    } finally {
+      purifyWindow.close();
+    }
+  } finally {
+    dom.window.close();
   }
 
-  const window = new JSDOM("").window;
-  const purify = DOMPurify(window);
-  const purifiedHTML = purify.sanitize(readableContent.content);
-
-  logger.info(`[Crawler][${jobId}] Done extracting readable content.`);
-  return {
-    content: purifiedHTML,
-    textContent: readableContent.textContent,
-  };
+  return result;
 }
 
 async function storeScreenshot(
@@ -618,7 +670,7 @@ async function storeScreenshot(
   }
   const assetId = newAssetId();
   const contentType = "image/jpeg";
-  const fileName = "screenshot.png";
+  const fileName = "screenshot.jpeg";
 
   // Check storage quota before saving the screenshot
   const { data: quotaApproved, error: quotaError } = await tryCatch(
@@ -768,6 +820,15 @@ async function archiveWebpage(
   let res = await execa({
     input: html,
     cancelSignal: abortSignal,
+    env: {
+      https_proxy: serverConfig.proxy.httpsProxy
+        ? getRandomProxy(serverConfig.proxy.httpsProxy)
+        : undefined,
+      http_proxy: serverConfig.proxy.httpProxy
+        ? getRandomProxy(serverConfig.proxy.httpProxy)
+        : undefined,
+      no_proxy: serverConfig.proxy.noProxy?.join(","),
+    },
   })("monolith", ["-", "-Ije", "-t", "5", "-b", url, "-o", assetPath]);
 
   if (res.isCanceled) {
@@ -914,8 +975,6 @@ async function handleAsAssetBookmark(
   });
 }
 
-const HTML_CONTENT_SIZE_THRESHOLD = 50 * 1024; // 50KB
-
 type StoreHtmlResult =
   | { result: "stored"; assetId: string; size: number }
   | { result: "store_inline" }
@@ -930,11 +989,10 @@ async function storeHtmlContent(
     return { result: "not_stored" };
   }
 
-  const contentBuffer = Buffer.from(htmlContent, "utf8");
-  const contentSize = contentBuffer.byteLength;
+  const contentSize = Buffer.byteLength(htmlContent, "utf8");
 
   // Only store in assets if content is >= 50KB
-  if (contentSize < HTML_CONTENT_SIZE_THRESHOLD) {
+  if (contentSize < serverConfig.crawler.htmlContentSizeThreshold) {
     logger.info(
       `[Crawler][${jobId}] HTML content size (${contentSize} bytes) is below threshold, storing inline`,
     );
@@ -942,7 +1000,7 @@ async function storeHtmlContent(
   }
 
   const { data: quotaApproved, error: quotaError } = await tryCatch(
-    QuotaService.checkStorageQuota(db, userId, contentBuffer.byteLength),
+    QuotaService.checkStorageQuota(db, userId, contentSize),
   );
   if (quotaError) {
     logger.warn(
@@ -957,7 +1015,7 @@ async function storeHtmlContent(
     saveAsset({
       userId,
       assetId,
-      asset: contentBuffer,
+      asset: Buffer.from(htmlContent, "utf8"),
       metadata: {
         contentType: ASSET_TYPES.TEXT_HTML,
         fileName: null,
@@ -1024,16 +1082,22 @@ async function crawlAndParseUrl(
 
   const { htmlContent, screenshot, statusCode, url: browserUrl } = result;
 
-  const abortableWork = Promise.all([
+  const meta = await Promise.race([
     extractMetadata(htmlContent, browserUrl, jobId),
-    extractReadableContent(htmlContent, browserUrl, jobId),
-    storeScreenshot(screenshot, userId, jobId),
+    abortPromise(abortSignal),
   ]);
+  abortSignal.throwIfAborted();
 
-  await Promise.race([abortableWork, abortPromise(abortSignal)]);
+  let readableContent = await Promise.race([
+    extractReadableContent(htmlContent, browserUrl, jobId),
+    abortPromise(abortSignal),
+  ]);
+  abortSignal.throwIfAborted();
 
-  const [meta, readableContent, screenshotAssetInfo] = await abortableWork;
-
+  const screenshotAssetInfo = await Promise.race([
+    storeScreenshot(screenshot, userId, jobId),
+    abortPromise(abortSignal),
+  ]);
   abortSignal.throwIfAborted();
 
   const htmlContentAssetInfo = await storeHtmlContent(
@@ -1076,6 +1140,11 @@ async function crawlAndParseUrl(
 
   // TODO(important): Restrict the size of content to store
   const assetDeletionTasks: Promise<void>[] = [];
+  const inlineHtmlContent =
+    htmlContentAssetInfo.result === "store_inline"
+      ? (readableContent?.content ?? null)
+      : null;
+  readableContent = null;
   await db.transaction(async (txn) => {
     await txn
       .update(bookmarkLinks)
@@ -1085,10 +1154,7 @@ async function crawlAndParseUrl(
         // Don't store data URIs as they're not valid URLs and are usually quite large
         imageUrl: meta.image?.startsWith("data:") ? null : meta.image,
         favicon: meta.logo,
-        htmlContent:
-          htmlContentAssetInfo.result === "store_inline"
-            ? readableContent?.content
-            : null,
+        htmlContent: inlineHtmlContent,
         contentAssetId:
           htmlContentAssetInfo.result === "stored"
             ? htmlContentAssetInfo.assetId
@@ -1215,7 +1281,6 @@ async function runCrawler(job: DequeuedJob<ZCrawlLinkRequest>) {
   logger.info(
     `[Crawler][${jobId}] Will crawl "${url}" for link with id "${bookmarkId}"`,
   );
-  validateUrl(url);
 
   const contentType = await getContentType(url, jobId, job.abortSignal);
   job.abortSignal.throwIfAborted();

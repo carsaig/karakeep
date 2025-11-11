@@ -8,8 +8,12 @@ import { loadAllPlugins } from ".";
 await loadAllPlugins();
 const QUEUE_CLIENT = await getQueueClient();
 
-export function runQueueDBMigrations() {
-  QUEUE_CLIENT.init();
+export async function prepareQueue() {
+  await QUEUE_CLIENT.prepare();
+}
+
+export async function startQueue() {
+  await QUEUE_CLIENT.start();
 }
 
 // Link Crawler
@@ -63,21 +67,41 @@ export const SearchIndexingQueue =
     keepFailedJobs: false,
   });
 
-// Tidy Assets Worker
+// Admin maintenance worker
 export const zTidyAssetsRequestSchema = z.object({
   cleanDanglingAssets: z.boolean().optional().default(false),
   syncAssetMetadata: z.boolean().optional().default(false),
 });
 export type ZTidyAssetsRequest = z.infer<typeof zTidyAssetsRequestSchema>;
-export const TidyAssetsQueue = QUEUE_CLIENT.createQueue<ZTidyAssetsRequest>(
-  "tidy_assets_queue",
-  {
+
+export const zAdminMaintenanceTaskSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("tidy_assets"),
+    args: zTidyAssetsRequestSchema,
+  }),
+  z.object({
+    type: z.literal("migrate_large_link_html"),
+  }),
+]);
+
+export type ZAdminMaintenanceTask = z.infer<typeof zAdminMaintenanceTaskSchema>;
+export type ZAdminMaintenanceTaskType = ZAdminMaintenanceTask["type"];
+export type ZAdminMaintenanceTidyAssetsTask = Extract<
+  ZAdminMaintenanceTask,
+  { type: "tidy_assets" }
+>;
+export type ZAdminMaintenanceMigrateLargeLinkHtmlTask = Extract<
+  ZAdminMaintenanceTask,
+  { type: "migrate_large_link_html" }
+>;
+
+export const AdminMaintenanceQueue =
+  QUEUE_CLIENT.createQueue<ZAdminMaintenanceTask>("admin_maintenance_queue", {
     defaultJobArgs: {
       numRetries: 1,
     },
     keepFailedJobs: false,
-  },
-);
+  });
 
 export async function triggerSearchReindex(
   bookmarkId: string,
@@ -90,7 +114,8 @@ export async function triggerSearchReindex(
     },
     {
       ...opts,
-      idempotencyKey: `index:${bookmarkId}`,
+      // BUG: restate idempotency is also against completed jobs. Disabling it for now
+      //idempotencyKey: `index:${bookmarkId}`,
     },
   );
 }

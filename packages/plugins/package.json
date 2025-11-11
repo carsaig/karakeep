@@ -1,19 +1,27 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@karakeep/plugins-search-meilisearch",
+  "name": "@karakeep/plugins",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./queue-liteque": "./queue-liteque/index.ts",
+    "./queue-restate": "./queue-restate/index.ts",
+    "./search-meilisearch": "./search-meilisearch/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "format": "prettier . --ignore-path ../../.prettierignore",
-    "format:fix": "prettier . --write --ignore-path ../../.prettierignore",
+    "format": "prettier . --cache --ignore-path ../../.prettierignore --check",
+    "format:fix": "prettier . --cache --ignore-path ../../.prettierignore --write",
     "lint": "oxlint .",
     "lint:fix": "oxlint . --fix",
     "test": "vitest"
   },
   "dependencies": {
     "@karakeep/shared": "workspace:*",
+    "@restatedev/restate-sdk": "^1.9.0",
+    "@restatedev/restate-sdk-clients": "^1.9.0",
+    "liteque": "^0.6.2",
     "meilisearch": "^0.45.0"
   },
   "devDependencies": {

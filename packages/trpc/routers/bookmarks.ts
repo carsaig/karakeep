@@ -59,6 +59,7 @@ import { authedProcedure, createRateLimitMiddleware, router } from "../index";
 import { mapDBAssetTypeToUserType } from "../lib/attachments";
 import { getBookmarkIdsFromMatcher } from "../lib/search";
 import { Bookmark } from "../models/bookmarks";
+import { ImportSession } from "../models/importSessions";
 import { ensureAssetOwnership } from "./assets";
 
 export const ensureBookmarkOwnership = experimental_trpcMiddleware<{
@@ -252,6 +253,7 @@ async function toZodSchema(
     assets: assets.map((a) => ({
       id: a.id,
       assetType: mapDBAssetTypeToUserType(a.assetType),
+      fileName: a.fileName,
     })),
     ...rest,
   };
@@ -272,6 +274,13 @@ export const bookmarksAppRouter = router({
         // This doesn't 100% protect from duplicates because of races, but it's more than enough for this usecase.
         const alreadyExists = await attemptToDedupLink(ctx, input.url);
         if (alreadyExists) {
+          if (input.importSessionId) {
+            const session = await ImportSession.fromId(
+              ctx,
+              input.importSessionId,
+            );
+            await session.attachBookmark(alreadyExists.id);
+          }
           return { ...alreadyExists, alreadyExists: true };
         }
       }
@@ -301,6 +310,7 @@ export const bookmarksAppRouter = router({
               note: input.note,
               summary: input.summary,
               createdAt: input.createdAt,
+              source: input.source,
             })
             .returning()
         )[0];
@@ -416,12 +426,16 @@ export const bookmarksAppRouter = router({
         };
       });
 
+      if (input.importSessionId) {
+        const session = await ImportSession.fromId(ctx, input.importSessionId);
+        await session.attachBookmark(bookmark.id);
+      }
+
       const enqueueOpts: EnqueueOptions = {
         // The lower the priority number, the sooner the job will be processed
         priority: input.crawlPriority === "low" ? 50 : 0,
       };
 
-      // Enqueue crawling request
       switch (bookmark.content.type) {
         case BookmarkTypes.LINK: {
           // The crawling job triggers openai when it's done
@@ -454,6 +468,7 @@ export const bookmarksAppRouter = router({
           break;
         }
       }
+
       await triggerRuleEngineOnEvent(
         bookmark.id,
         [

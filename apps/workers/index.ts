@@ -2,18 +2,22 @@ import "dotenv/config";
 
 import { buildServer } from "server";
 
-import { loadAllPlugins, runQueueDBMigrations } from "@karakeep/shared-server";
+import {
+  loadAllPlugins,
+  prepareQueue,
+  startQueue,
+} from "@karakeep/shared-server";
 import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
 import { shutdownPromise } from "./exit";
+import { AdminMaintenanceWorker } from "./workers/adminMaintenanceWorker";
 import { AssetPreprocessingWorker } from "./workers/assetPreprocessingWorker";
 import { CrawlerWorker } from "./workers/crawlerWorker";
 import { FeedRefreshingWorker, FeedWorker } from "./workers/feedWorker";
 import { OpenAiWorker } from "./workers/inference/inferenceWorker";
 import { RuleEngineWorker } from "./workers/ruleEngineWorker";
 import { SearchIndexingWorker } from "./workers/searchWorker";
-import { TidyAssetsWorker } from "./workers/tidyAssetsWorker";
 import { VideoWorker } from "./workers/videoWorker";
 import { WebhookWorker } from "./workers/webhookWorker";
 
@@ -21,7 +25,7 @@ const workerBuilders = {
   crawler: () => CrawlerWorker.build(),
   inference: () => OpenAiWorker.build(),
   search: () => SearchIndexingWorker.build(),
-  tidyAssets: () => TidyAssetsWorker.build(),
+  adminMaintenance: () => AdminMaintenanceWorker.build(),
   video: () => VideoWorker.build(),
   feed: () => FeedWorker.build(),
   assetPreprocessing: () => AssetPreprocessingWorker.build(),
@@ -46,7 +50,7 @@ function isWorkerEnabled(name: WorkerName) {
 async function main() {
   await loadAllPlugins();
   logger.info(`Workers version: ${serverConfig.serverVersion ?? "not set"}`);
-  runQueueDBMigrations();
+  await prepareQueue();
 
   const httpServer = buildServer();
 
@@ -58,6 +62,8 @@ async function main() {
         worker: await builder(),
       })),
   );
+
+  await startQueue();
 
   if (workers.some((w) => w.name === "feed")) {
     FeedRefreshingWorker.start();

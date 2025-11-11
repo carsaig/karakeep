@@ -1,9 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
+import { fetchWithProxy } from "network";
 import cron from "node-cron";
 import Parser from "rss-parser";
 import { buildImpersonatingTRPCClient } from "trpc";
-import { fetchWithProxy } from "utils";
 import { z } from "zod";
 
 import type { ZFeedRequestSchema } from "@karakeep/shared-server";
@@ -26,13 +26,18 @@ export const FeedRefreshingWorker = cron.schedule(
         where: eq(rssFeedsTable.enabled, true),
       })
       .then((feeds) => {
+        const currentHour = new Date();
+        currentHour.setMinutes(0, 0, 0);
+        const hourlyWindow = currentHour.toISOString();
+
         for (const feed of feeds) {
+          const idempotencyKey = `${feed.id}-${hourlyWindow}`;
           FeedQueue.enqueue(
             {
               feedId: feed.id,
             },
             {
-              idempotencyKey: feed.id,
+              idempotencyKey,
             },
           );
         }
@@ -149,6 +154,8 @@ async function run(req: DequeuedJob<ZFeedRequestSchema>) {
     id: z.coerce.string(),
     link: z.string().optional(),
     guid: z.string().optional(),
+    title: z.string().optional(),
+    categories: z.array(z.string()).optional(),
   });
 
   const feedItems = unparseFeedData.items
@@ -204,9 +211,37 @@ async function run(req: DequeuedJob<ZFeedRequestSchema>) {
       trpcClient.bookmarks.createBookmark({
         type: BookmarkTypes.LINK,
         url: item.link!,
+        title: item.title,
+        source: "rss",
       }),
     ),
   );
+
+  // If importTags is enabled, attach categories as tags to the created bookmarks
+  if (feed.importTags) {
+    await Promise.allSettled(
+      newEntries.map(async (item, idx) => {
+        const bookmark = createdBookmarks[idx];
+        if (
+          bookmark.status === "fulfilled" &&
+          item.categories &&
+          item.categories.length > 0
+        ) {
+          try {
+            await trpcClient.bookmarks.updateTags({
+              bookmarkId: bookmark.value.id,
+              attach: item.categories.map((tagName) => ({ tagName })),
+              detach: [],
+            });
+          } catch (error) {
+            logger.warn(
+              `[feed][${jobId}] Failed to attach tags to bookmark ${bookmark.value.id}: ${error}`,
+            );
+          }
+        }
+      }),
+    );
+  }
 
   // It's ok if this is not transactional as the bookmarks will get linked in the next iteration.
   await db
