@@ -75,8 +75,52 @@ jobs:
           BRANCH="chore/upstream-sync-${TAG}"
           echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
+
           # Create branch at the upstream release commit
           git checkout -B "${BRANCH}" "${OID}"
+
+          # Attempt to merge with main to detect/resolve conflicts early
+          echo "Attempting to merge with main to handle conflicts..."
+          git config user.name "Carsaig Automation"
+          git config user.email "56911+carsaig@users.noreply.github.com"
+
+          set +e
+          git merge origin/main --no-edit --strategy-option theirs 2>&1 | tee /tmp/merge.log
+          MERGE_EXIT=$?
+          set -e
+
+          if [ $MERGE_EXIT -ne 0 ]; then
+            echo "Merge conflicts detected. Attempting automatic resolution..."
+
+            # Strategy: For workflow files, keep ours (local/your version)
+            # For everything else, accept upstream changes (theirs)
+            if git diff --name-only --diff-filter=U | grep -q "^\.github/workflows/"; then
+              echo "Workflow conflicts found - keeping local workflow files"
+              git diff --name-only --diff-filter=U | grep "^\.github/workflows/" | xargs git checkout --ours
+            fi
+
+            # For docs and other files, accept upstream changes
+            if git diff --name-only --diff-filter=U | grep -qv "^\.github/workflows/"; then
+              echo "Non-workflow conflicts found - accepting upstream changes"
+              git diff --name-only --diff-filter=U | grep -v "^\.github/workflows/" | xargs git checkout --theirs || true
+            fi
+
+            # Stage all resolved files
+            git add -A
+
+            # Check if there are still unresolved conflicts
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo "⚠️ Still have unresolved conflicts after automatic resolution:"
+              git diff --name-only --diff-filter=U
+              echo "changed=conflict" >> "$GITHUB_OUTPUT"
+            else
+              git commit --no-edit -m "chore: merge main into upstream sync branch (auto-resolved conflicts)" || true
+              echo "✅ Conflicts automatically resolved"
+            fi
+          else
+            echo "✅ Clean merge with main - no conflicts"
+          fi
+
           # Clean up temp tag
           git tag -d _tmp_upstream_tag >/dev/null 2>&1 || true
 
@@ -154,8 +198,34 @@ jobs:
 
       - name: Enable PR auto-merge (squash) once checks pass
         if: steps.diffcheck.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number && steps.cpr.outputs.pull-request-number != ''
-        uses: peter-evans/enable-pull-request-automerge@v3
-        with:
-          token: ${{ env.GITHUB_PAT }}
-          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
-          merge-method: squash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.GITHUB_PAT }}
+        run: |
+          set +e
+
+          echo "Attempting to enable auto-merge for PR #${{ steps.cpr.outputs.pull-request-number }}"
+
+          gh pr merge \
+            --repo "${{ github.repository }}" \
+            --auto \
+            --squash \
+            "${{ steps.cpr.outputs.pull-request-number }}" \
+            2>&1 | tee /tmp/automerge.log
+
+          AUTOMERGE_EXIT=$?
+
+          if [ $AUTOMERGE_EXIT -eq 0 ]; then
+            echo "✅ Auto-merge enabled successfully"
+          else
+            echo "⚠️ Could not enable auto-merge (this is OK)"
+            echo "Possible reasons:"
+            echo "  - Merge conflicts exist (manual resolution required)"
+            echo "  - Branch protection rules don't allow auto-merge"
+            echo "  - PR needs manual review"
+            echo ""
+            echo "📋 Next steps:"
+            echo "  1. Check PR #${{ steps.cpr.outputs.pull-request-number }} for conflicts"
+            echo "  2. Resolve any conflicts manually if needed"
+            echo "  3. Merge manually when ready"
+          fi
