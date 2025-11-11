@@ -116,8 +116,10 @@ jobs:
         env:
           GH_TOKEN: ${{ env.GITHUB_PAT }}
         run: |
+          set +e  # Disable exit on error for PR creation
+
           # Create PR using GitHub CLI
-          PR_URL=$(gh pr create \
+          PR_OUTPUT=$(gh pr create \
             --repo "${{ github.repository }}" \
             --base "${{ github.event.repository.default_branch }}" \
             --head "${{ steps.prep.outputs.branch }}" \
@@ -128,18 +130,26 @@ jobs:
             --label "dependencies,upstream-sync" \
             2>&1)
 
-          if [ $? -eq 0 ]; then
-            echo "PR created: $PR_URL"
-            PR_NUMBER=$(echo "$PR_URL" | grep -oP 'pull/\K[0-9]+')
+          PR_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+
+          if [ $PR_EXIT_CODE -eq 0 ]; then
+            echo "✅ PR created: $PR_OUTPUT"
+            PR_NUMBER=$(echo "$PR_OUTPUT" | grep -oP 'pull/\K[0-9]+')
             echo "pull-request-number=$PR_NUMBER" >> $GITHUB_OUTPUT
-            echo "pull-request-url=$PR_URL" >> $GITHUB_OUTPUT
+            echo "pull-request-url=$PR_OUTPUT" >> $GITHUB_OUTPUT
           else
-            echo "Failed to create PR or PR already exists: $PR_URL"
+            echo "⚠️ PR creation failed or PR already exists"
+            echo "Output: $PR_OUTPUT"
+
             # Try to find existing PR
             EXISTING_PR=$(gh pr list --repo "${{ github.repository }}" --head "${{ steps.prep.outputs.branch }}" --json number --jq '.[0].number' 2>/dev/null || echo "")
             if [ -n "$EXISTING_PR" ]; then
-              echo "Found existing PR #$EXISTING_PR"
+              echo "✅ Found existing PR #$EXISTING_PR"
               echo "pull-request-number=$EXISTING_PR" >> $GITHUB_OUTPUT
+            else
+              echo "❌ No PR found. Branch might have no differences from base."
+              echo "This is expected if upstream changes are already in main."
             fi
           fi
 
