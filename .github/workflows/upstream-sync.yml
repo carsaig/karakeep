@@ -118,7 +118,7 @@ jobs:
         run: |
           set +e  # Disable exit on error for PR creation
 
-          # Create PR using GitHub CLI
+          # Create PR using GitHub CLI (without labels to avoid failures)
           PR_OUTPUT=$(gh pr create \
             --repo "${{ github.repository }}" \
             --base "${{ github.event.repository.default_branch }}" \
@@ -127,7 +127,6 @@ jobs:
             --body "This PR merges upstream release \`${{ steps.latest.outputs.tag }}\` from **${{ env.UPSTREAM_URL }}** into this repo.
 
           - CI must be green (branch protection enforces this)." \
-            --label "dependencies,upstream-sync" \
             2>&1)
 
           PR_EXIT_CODE=$?
