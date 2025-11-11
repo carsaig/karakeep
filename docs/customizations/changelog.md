@@ -1,5 +1,47 @@
 # Karakeep Customizations Changelog
 
+## 2025-01-11 - Automated Upstream Sync Workflow
+
+### Added Fully Automated Upstream Release Synchronization
+
+**What was added:**
+- `.github/workflows/upstream-sync.yml` workflow for automated upstream synchronization
+- Automatic conflict resolution strategy for seamless merges
+- 1Password integration for secure PAT authentication
+- Daily automated checks for new upstream releases at 12:00 CET
+
+**Workflow capabilities:**
+- **Automatic release detection**: Monitors karakeep-app/karakeep for new releases
+- **Smart conflict resolution**: 
+  - Keeps local workflow files (`.github/workflows/*`)
+  - Accepts upstream changes for all other files (code, docs, etc.)
+- **Pull request automation**: Creates PRs with resolved conflicts automatically
+- **Auto-merge integration**: Enables auto-merge when CI checks pass
+- **Build & deploy chain**: Triggers Coolify deployment after successful merge
+
+**Implementation details:**
+- **Authentication**: Uses 1Password vault (`op://SECRETS/Github/PAT_Claude`) for PAT
+- **Conflict strategy**: `--ours` for workflows, `--theirs` for everything else
+- **Error handling**: Graceful handling of auto-merge failures and edge cases
+- **Schedule**: Daily cron at 11:00 UTC (12:00 CET year-round)
+
+**Benefits:**
+- Zero manual intervention for upstream updates
+- Maintains fork-specific customizations automatically
+- Gets latest features and bug fixes from upstream immediately
+- Proper version display in UI after deployments
+- Documented configuration for future reference
+
+**Manual intervention only required when:**
+- Truly complex merge conflicts that auto-resolution cannot handle
+- CI checks fail (indicating breaking changes)
+- Manual review explicitly requested
+
+**Integration with existing workflows:**
+- Works seamlessly with Coolify deployment workflow
+- Preserves custom GitHub Actions configurations
+- Maintains fork-specific environment variables
+
 ## 2025-10-04 - Renovate Configuration
 
 ### Added Automated Dependency Management (GitHub Actions Only)
