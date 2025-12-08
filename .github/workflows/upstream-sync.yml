@@ -80,6 +80,7 @@ jobs:
           git checkout -B "${BRANCH}" "${OID}"
 
           # Always keep our repo's workflow files (ignore upstream workflow changes)
+          rm -rf .github/workflows
           git checkout origin/main -- .github/workflows || true
 
           # Attempt to merge with main to detect/resolve conflicts early
