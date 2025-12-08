@@ -22,6 +22,7 @@ export const FeedRefreshingWorker = cron.schedule(
       .findMany({
         columns: {
           id: true,
+          userId: true,
         },
         where: eq(rssFeedsTable.enabled, true),
       })
@@ -38,6 +39,7 @@ export const FeedRefreshingWorker = cron.schedule(
             },
             {
               idempotencyKey,
+              groupId: feed.userId,
             },
           );
         }
@@ -67,6 +69,9 @@ export class FeedWorker {
         },
         onError: async (job) => {
           workerStatsCounter.labels("feed", "failed").inc();
+          if (job.numRetriesLeft == 0) {
+            workerStatsCounter.labels("feed", "failed_permanent").inc();
+          }
           const jobId = job.id;
           logger.error(
             `[feed][${jobId}] Feed fetch job failed: ${job.error}\n${job.error.stack}`,

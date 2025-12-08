@@ -31,9 +31,8 @@ import {
 import { AuthedContext, Context } from "..";
 import { generatePasswordSalt, hashPassword, validatePassword } from "../auth";
 import { sendPasswordResetEmail, sendVerificationEmail } from "../email";
-import { PrivacyAware } from "./privacy";
 
-export class User implements PrivacyAware {
+export class User {
   constructor(
     protected ctx: AuthedContext,
     public user: typeof users.$inferSelect,
@@ -355,15 +354,6 @@ export class User implements PrivacyAware {
       .where(eq(passwordResetTokens.token, input.token));
   }
 
-  ensureCanAccess(ctx: AuthedContext): void {
-    if (this.user.id !== ctx.user.id) {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "User is not allowed to access resource",
-      });
-    }
-  }
-
   private static async deleteInternal(db: Context["db"], userId: string) {
     const res = await db.delete(users).where(eq(users.id, userId));
 
@@ -440,6 +430,9 @@ export class User implements PrivacyAware {
         bookmarkClickAction: true,
         archiveDisplayBehaviour: true,
         timezone: true,
+        backupsEnabled: true,
+        backupsFrequency: true,
+        backupsRetentionDays: true,
       },
     });
 
@@ -454,6 +447,9 @@ export class User implements PrivacyAware {
       bookmarkClickAction: settings.bookmarkClickAction,
       archiveDisplayBehaviour: settings.archiveDisplayBehaviour,
       timezone: settings.timezone || "UTC",
+      backupsEnabled: settings.backupsEnabled,
+      backupsFrequency: settings.backupsFrequency,
+      backupsRetentionDays: settings.backupsRetentionDays,
     };
   }
 
@@ -473,6 +469,9 @@ export class User implements PrivacyAware {
         bookmarkClickAction: input.bookmarkClickAction,
         archiveDisplayBehaviour: input.archiveDisplayBehaviour,
         timezone: input.timezone,
+        backupsEnabled: input.backupsEnabled,
+        backupsFrequency: input.backupsFrequency,
+        backupsRetentionDays: input.backupsRetentionDays,
       })
       .where(eq(users.id, this.user.id));
   }
@@ -506,6 +505,7 @@ export class User implements PrivacyAware {
       [{ thisYear }],
       bookmarkTimestamps,
       tagUsage,
+      bookmarksBySource,
     ] = await Promise.all([
       // Basic counts
       this.ctx.db
@@ -677,6 +677,17 @@ export class User implements PrivacyAware {
         .groupBy(bookmarkTags.name)
         .orderBy(desc(count()))
         .limit(10),
+
+      // Bookmarks by source
+      this.ctx.db
+        .select({
+          source: bookmarks.source,
+          count: count(),
+        })
+        .from(bookmarks)
+        .where(eq(bookmarks.userId, this.user.id))
+        .groupBy(bookmarks.source)
+        .orderBy(desc(count())),
     ]);
 
     // Process bookmarks by type
@@ -735,6 +746,7 @@ export class User implements PrivacyAware {
         byDayOfWeek: dailyActivity,
       },
       tagUsage,
+      bookmarksBySource,
     };
   }
 

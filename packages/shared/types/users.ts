@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { zBookmarkSourceSchema } from "./bookmarks";
+
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 100;
 
@@ -91,6 +93,12 @@ export const zUserStatsResponseSchema = z.object({
       }),
     )
     .max(10),
+  bookmarksBySource: z.array(
+    z.object({
+      source: zBookmarkSourceSchema.nullable(),
+      count: z.number(),
+    }),
+  ),
 });
 
 export const zUserSettingsSchema = z.object({
@@ -100,6 +108,9 @@ export const zUserSettingsSchema = z.object({
   ]),
   archiveDisplayBehaviour: z.enum(["show", "hide"]),
   timezone: z.string(),
+  backupsEnabled: z.boolean(),
+  backupsFrequency: z.enum(["daily", "weekly"]),
+  backupsRetentionDays: z.number().int().min(1).max(365),
 });
 
 export type ZUserSettings = z.infer<typeof zUserSettingsSchema>;
@@ -108,4 +119,13 @@ export const zUpdateUserSettingsSchema = zUserSettingsSchema.partial().pick({
   bookmarkClickAction: true,
   archiveDisplayBehaviour: true,
   timezone: true,
+  backupsEnabled: true,
+  backupsFrequency: true,
+  backupsRetentionDays: true,
+});
+
+export const zUpdateBackupSettingsSchema = zUpdateUserSettingsSchema.pick({
+  backupsEnabled: true,
+  backupsFrequency: true,
+  backupsRetentionDays: true,
 });

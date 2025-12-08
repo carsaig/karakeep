@@ -47,6 +47,11 @@ export class AssetPreprocessingWorker {
           },
           onError: async (job) => {
             workerStatsCounter.labels("assetPreProcessing", "failed").inc();
+            if (job.numRetriesLeft == 0) {
+              workerStatsCounter
+                .labels("assetPreProcessing", "failed_permanent")
+                .inc();
+            }
             const jobId = job.id;
             logger.error(
               `[assetPreprocessing][${jobId}] Asset preprocessing failed: ${job.error}\n${job.error.stack}`,
@@ -356,6 +361,7 @@ async function run(req: DequeuedJob<AssetPreprocessingRequest>) {
   // Propagate priority to child jobs
   const enqueueOpts: EnqueueOptions = {
     priority: req.priority,
+    groupId: bookmark.userId,
   };
   if (!isFixMode || anythingChanged) {
     await OpenAIQueue.enqueue(

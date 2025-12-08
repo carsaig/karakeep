@@ -11,9 +11,9 @@ import { tryCatch } from "@karakeep/shared/tryCatch";
 import { genId } from "./idProvider";
 import { RestateSemaphore } from "./semaphore";
 
-export function buildRestateService<T>(
+export function buildRestateService<T, R>(
   queue: Queue<T>,
-  funcs: RunnerFuncs<T>,
+  funcs: RunnerFuncs<T, R>,
   opts: RunnerOptions<T>,
   queueOpts: QueueOptions,
 ) {
@@ -24,6 +24,15 @@ export function buildRestateService<T>(
       inactivityTimeout: {
         seconds: opts.timeoutSecs,
       },
+      retryPolicy: {
+        maxAttempts: NUM_RETRIES,
+        initialInterval: {
+          seconds: 5,
+        },
+        maxInterval: {
+          minutes: 1,
+        },
+      },
     },
     handlers: {
       run: async (
@@ -31,6 +40,7 @@ export function buildRestateService<T>(
         data: {
           payload: T;
           priority: number;
+          groupId?: string;
         },
       ) => {
         const id = `${await genId(ctx)}`;
@@ -55,7 +65,7 @@ export function buildRestateService<T>(
 
         let lastError: Error | undefined;
         for (let runNumber = 0; runNumber <= NUM_RETRIES; runNumber++) {
-          await semaphore.acquire(priority);
+          await semaphore.acquire(priority, data.groupId);
           const res = await runWorkerLogic(ctx, funcs, {
             id,
             data: payload,
@@ -66,6 +76,9 @@ export function buildRestateService<T>(
           });
           await semaphore.release();
           if (res.error) {
+            if (res.error instanceof restate.CancelledError) {
+              throw res.error;
+            }
             lastError = res.error;
             // TODO: add backoff
             await ctx.sleep(1000);
@@ -84,9 +97,9 @@ export function buildRestateService<T>(
   });
 }
 
-async function runWorkerLogic<T>(
+async function runWorkerLogic<T, R>(
   ctx: restate.Context,
-  { run, onError, onComplete }: RunnerFuncs<T>,
+  { run, onError, onComplete }: RunnerFuncs<T, R>,
   data: {
     id: string;
     data: T;
@@ -100,7 +113,7 @@ async function runWorkerLogic<T>(
     ctx.run(
       `main logic`,
       async () => {
-        await run(data);
+        return await run(data);
       },
       {
         maxRetryAttempts: 1,
@@ -125,7 +138,7 @@ async function runWorkerLogic<T>(
   }
 
   await tryCatch(
-    ctx.run("onComplete", async () => await onComplete?.(data), {
+    ctx.run("onComplete", async () => await onComplete?.(data, res.data), {
       maxRetryAttempts: 1,
     }),
   );
