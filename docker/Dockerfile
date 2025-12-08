@@ -9,7 +9,9 @@ ENV PATH="$PNPM_HOME:$PATH"
 RUN npm install -g corepack@0.31.0 && corepack enable
 
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk add --no-cache libc6-compat make g++ py3-pip linux-headers
+RUN set -euo pipefail \
+    && apk add --no-cache --no-scripts libc6-compat make g++ py3-pip linux-headers \
+    && busybox --install -s /bin
 
 # Copy package files for dependency installation
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
@@ -96,6 +98,7 @@ COPY --chmod=755 ./docker/root/etc/s6-overlay /etc/s6-overlay
 ######################
 RUN set -euo pipefail \
     && apk add --no-cache --no-scripts curl ca-certificates yt-dlp graphicsmagick ghostscript \
+    && busybox --install -s /bin \
     && update-ca-certificates || true \
     && fc-cache -f || true \
     && ARCH="${TARGETARCH:-$(apk --print-arch)}" \
