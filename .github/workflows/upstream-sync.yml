@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  workflows: write
 
 env:
   UPSTREAM_URL: https://github.com/karakeep-app/karakeep.git
