@@ -94,7 +94,16 @@ COPY --chmod=755 ./docker/root/etc/s6-overlay /etc/s6-overlay
 ######################
 # Install runtime deps
 ######################
-RUN apk add --no-cache monolith yt-dlp graphicsmagick ghostscript
+RUN set -euo pipefail \
+    && apk add --no-cache curl ca-certificates yt-dlp graphicsmagick ghostscript \
+    && ARCH="${TARGETARCH:-$(apk --print-arch)}" \
+    && case "${ARCH}" in \
+         amd64|x86_64) MONO_ARCH="x86_64" ;; \
+         arm64|aarch64) MONO_ARCH="aarch64" ;; \
+         *) echo "Unsupported arch for monolith: ${ARCH}" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://github.com/Y2Z/monolith/releases/latest/download/monolith-gnu-linux-${MONO_ARCH}" -o /usr/local/bin/monolith \
+    && chmod +x /usr/local/bin/monolith
 
 ######################
 # Prepare the web app
