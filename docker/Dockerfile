@@ -95,7 +95,9 @@ COPY --chmod=755 ./docker/root/etc/s6-overlay /etc/s6-overlay
 # Install runtime deps
 ######################
 RUN set -euo pipefail \
-    && apk add --no-cache curl ca-certificates yt-dlp graphicsmagick ghostscript \
+    && apk add --no-cache --no-scripts curl ca-certificates yt-dlp graphicsmagick ghostscript \
+    && update-ca-certificates || true \
+    && fc-cache -f || true \
     && ARCH="${TARGETARCH:-$(apk --print-arch)}" \
     && case "${ARCH}" in \
          amd64|x86_64) MONO_ARCH="x86_64" ;; \
