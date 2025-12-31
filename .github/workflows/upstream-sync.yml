@@ -1,0 +1,235 @@
+name: Upstream Sync
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Daily 12:00 CET (fixed at 11:00 UTC year-round)
+    - cron: "0 11 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_URL: https://github.com/karakeep-app/karakeep.git
+  UPSTREAM_BRANCH: main
+  SYNC_BRANCH: chore/upstream-sync
+  UPSTREAM_OWNER: karakeep-app
+  UPSTREAM_REPO: karakeep
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Ensure jq is available
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Resolve latest upstream release tag
+        id: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=$(curl -sSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                 -H "Accept: application/vnd.github+json" \
+                 "https://api.github.com/repos/${UPSTREAM_OWNER}/${UPSTREAM_REPO}/releases/latest" | jq -r '.tag_name')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No release tag found" >&2
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare sync branch from latest release tag
+        id: prep
+        if: steps.latest.outputs.tag != ''
+        run: |
+          set -euo pipefail
+          git remote add upstream "${UPSTREAM_URL}" || true
+          TAG="${{ steps.latest.outputs.tag }}"
+          TMPBR="_upstream_${TAG}"
+          # Fetch upstream tag into a temporary local tag, peel to commit, then create branch
+          git fetch --no-tags upstream "refs/tags/${TAG}:refs/tags/_tmp_upstream_tag" || {
+            echo "Unable to fetch upstream tag ${TAG}" >&2
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          OID=$(git rev-parse "_tmp_upstream_tag^{commit}")
+          # Determine if that commit is already in origin/main
+          git fetch origin main
+          if git merge-base --is-ancestor "${OID}" origin/main; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            git tag -d _tmp_upstream_tag >/dev/null 2>&1 || true
+            exit 0
+          fi
+          BRANCH="chore/upstream-sync-${TAG}"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          # Create branch at the upstream release commit
+          git checkout -B "${BRANCH}" "${OID}"
+
+          # Always keep our repo's workflow files (ignore upstream workflow changes)
+          rm -rf .github/workflows
+          git checkout origin/main -- .github/workflows || true
+
+          # Attempt to merge with main to detect/resolve conflicts early
+          echo "Attempting to merge with main to handle conflicts..."
+          git config user.name "Carsaig Automation"
+          git config user.email "56911+carsaig@users.noreply.github.com"
+
+          set +e
+          git merge origin/main --no-edit --strategy-option theirs 2>&1 | tee /tmp/merge.log
+          MERGE_EXIT=$?
+          set -e
+
+          if [ $MERGE_EXIT -ne 0 ]; then
+            echo "Merge conflicts detected. Attempting automatic resolution..."
+
+            # Strategy: For workflow files, keep ours (local/your version)
+            # For everything else, accept upstream changes (theirs)
+            if git diff --name-only --diff-filter=U | grep -q "^\.github/workflows/"; then
+              echo "Workflow conflicts found - keeping local workflow files"
+              git diff --name-only --diff-filter=U | grep "^\.github/workflows/" | xargs -r git checkout --theirs
+            fi
+
+            # For docs and other files, accept upstream changes
+            if git diff --name-only --diff-filter=U | grep -qv "^\.github/workflows/"; then
+              echo "Non-workflow conflicts found - accepting upstream changes"
+              git diff --name-only --diff-filter=U | grep -v "^\.github/workflows/" | xargs -r git checkout --ours || true
+            fi
+
+            # Stage all resolved files
+            git add -A
+
+            # Check if there are still unresolved conflicts
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo "⚠️ Still have unresolved conflicts after automatic resolution:"
+              git diff --name-only --diff-filter=U
+              echo "changed=conflict" >> "$GITHUB_OUTPUT"
+            else
+              git commit --no-edit -m "chore: merge main into upstream sync branch (auto-resolved conflicts)" || true
+              echo "✅ Conflicts automatically resolved"
+            fi
+          else
+            echo "✅ Clean merge with main - no conflicts"
+          fi
+
+          # Clean up temp tag
+          git tag -d _tmp_upstream_tag >/dev/null 2>&1 || true
+
+      - name: Evaluate change status
+        id: diffcheck
+        if: steps.latest.outputs.tag != ''
+        run: |
+          echo "changed=${{ steps.prep.outputs.changed }}" >> "$GITHUB_OUTPUT"
+
+      - name: Load GitHub PAT from 1Password
+        if: steps.diffcheck.outputs.changed == 'true'
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GITHUB_PAT: op://SECRETS/Github/PAT_Claude
+
+      - name: Configure PAT authentication
+        if: steps.diffcheck.outputs.changed == 'true'
+        run: |
+          git config user.name "Carsaig Automation"
+          git config user.email "56911+carsaig@users.noreply.github.com"
+          # Unset checkout's GITHUB_TOKEN auth header so PAT is used
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git remote set-url origin "https://x-access-token:${GITHUB_PAT}@github.com/${{ github.repository }}.git"
+          echo "Using 1Password PAT for push"
+
+      - name: Push sync branch
+        if: steps.diffcheck.outputs.changed == 'true'
+        run: |
+          git push --force-with-lease -u origin "${{ steps.prep.outputs.branch }}"
+
+      - name: Create PR using GitHub API
+        id: cpr
+        if: steps.diffcheck.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ env.GITHUB_PAT }}
+        run: |
+          set +e  # Disable exit on error for PR creation
+
+          # Create PR using GitHub CLI (without labels to avoid failures)
+          PR_OUTPUT=$(gh pr create \
+            --repo "${{ github.repository }}" \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "${{ steps.prep.outputs.branch }}" \
+            --title "chore: sync upstream release ${{ steps.latest.outputs.tag }}" \
+            --body "This PR merges upstream release \`${{ steps.latest.outputs.tag }}\` from **${{ env.UPSTREAM_URL }}** into this repo.
+
+          - CI must be green (branch protection enforces this)." \
+            2>&1)
+
+          PR_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+
+          if [ $PR_EXIT_CODE -eq 0 ]; then
+            echo "✅ PR created: $PR_OUTPUT"
+            PR_NUMBER=$(echo "$PR_OUTPUT" | grep -oP 'pull/\K[0-9]+')
+            echo "pull-request-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "pull-request-url=$PR_OUTPUT" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ PR creation failed or PR already exists"
+            echo "Output: $PR_OUTPUT"
+
+            # Try to find existing PR
+            EXISTING_PR=$(gh pr list --repo "${{ github.repository }}" --head "${{ steps.prep.outputs.branch }}" --json number --jq '.[0].number' 2>/dev/null || echo "")
+            if [ -n "$EXISTING_PR" ]; then
+              echo "✅ Found existing PR #$EXISTING_PR"
+              echo "pull-request-number=$EXISTING_PR" >> $GITHUB_OUTPUT
+            else
+              echo "❌ No PR found. Branch might have no differences from base."
+              echo "This is expected if upstream changes are already in main."
+            fi
+          fi
+
+      - name: Enable PR auto-merge (squash) once checks pass
+        if: steps.diffcheck.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number && steps.cpr.outputs.pull-request-number != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.GITHUB_PAT }}
+        run: |
+          set +e
+
+          echo "Attempting to enable auto-merge for PR #${{ steps.cpr.outputs.pull-request-number }}"
+
+          gh pr merge \
+            --repo "${{ github.repository }}" \
+            --auto \
+            --squash \
+            "${{ steps.cpr.outputs.pull-request-number }}" \
+            2>&1 | tee /tmp/automerge.log
+
+          AUTOMERGE_EXIT=$?
+
+          if [ $AUTOMERGE_EXIT -eq 0 ]; then
+            echo "✅ Auto-merge enabled successfully"
+          else
+            echo "⚠️ Could not enable auto-merge (this is OK)"
+            echo "Possible reasons:"
+            echo "  - Merge conflicts exist (manual resolution required)"
+            echo "  - Branch protection rules don't allow auto-merge"
+            echo "  - PR needs manual review"
+            echo ""
+            echo "📋 Next steps:"
+            echo "  1. Check PR #${{ steps.cpr.outputs.pull-request-number }} for conflicts"
+            echo "  2. Resolve any conflicts manually if needed"
+            echo "  3. Merge manually when ready"
+          fi
