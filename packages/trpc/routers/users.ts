@@ -9,6 +9,7 @@ import {
   zUserSettingsSchema,
   zUserStatsResponseSchema,
   zWhoAmIResponseSchema,
+  zWrappedStatsResponseSchema,
 } from "@karakeep/shared/types/users";
 
 import {
@@ -18,6 +19,7 @@ import {
   publicProcedure,
   router,
 } from "../index";
+import { verifyTurnstileToken } from "../lib/turnstile";
 import { User } from "../models/users";
 
 export const usersAppRouter = router({
@@ -50,6 +52,18 @@ export const usersAppRouter = router({
           code: "FORBIDDEN",
           message: errorMessage,
         });
+      }
+      if (serverConfig.auth.turnstile.enabled) {
+        const result = await verifyTurnstileToken(
+          input.turnstileToken ?? "",
+          ctx.req.ip,
+        );
+        if (!result.success) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Turnstile verification failed",
+          });
+        }
       }
       const user = await User.create(ctx, input);
       return {
@@ -123,6 +137,16 @@ export const usersAppRouter = router({
       const user = await User.fromCtx(ctx);
       return await user.getStats();
     }),
+  wrapped: authedProcedure
+    .output(zWrappedStatsResponseSchema)
+    .query(async ({ ctx }) => {
+      const user = await User.fromCtx(ctx);
+      return await user.getWrappedStats(2025);
+    }),
+  hasWrapped: authedProcedure.output(z.boolean()).query(async ({ ctx }) => {
+    const user = await User.fromCtx(ctx);
+    return await user.hasWrapped();
+  }),
   settings: authedProcedure
     .output(zUserSettingsSchema)
     .query(async ({ ctx }) => {
@@ -134,6 +158,16 @@ export const usersAppRouter = router({
     .mutation(async ({ input, ctx }) => {
       const user = await User.fromCtx(ctx);
       await user.updateSettings(input);
+    }),
+  updateAvatar: authedProcedure
+    .input(
+      z.object({
+        assetId: z.string().nullable(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const user = await User.fromCtx(ctx);
+      await user.updateAvatar(input.assetId);
     }),
   verifyEmail: publicProcedure
     .use(

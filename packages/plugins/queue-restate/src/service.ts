@@ -6,6 +6,7 @@ import type {
   RunnerFuncs,
   RunnerOptions,
 } from "@karakeep/shared/queueing";
+import { QueueRetryAfterError } from "@karakeep/shared/queueing";
 import { tryCatch } from "@karakeep/shared/tryCatch";
 
 import { genId } from "./idProvider";
@@ -33,12 +34,16 @@ export function buildRestateService<T, R>(
           minutes: 1,
         },
       },
+      journalRetention: {
+        days: 3,
+      },
     },
     handlers: {
       run: async (
         ctx: restate.Context,
         data: {
           payload: T;
+          queuedIdempotencyKey?: string;
           priority: number;
           groupId?: string;
         },
@@ -64,8 +69,16 @@ export function buildRestateService<T, R>(
         );
 
         let lastError: Error | undefined;
-        for (let runNumber = 0; runNumber <= NUM_RETRIES; runNumber++) {
-          await semaphore.acquire(priority, data.groupId);
+        let runNumber = 0;
+        while (runNumber <= NUM_RETRIES) {
+          const acquired = await semaphore.acquire(
+            priority,
+            data.groupId,
+            data.queuedIdempotencyKey,
+          );
+          if (!acquired) {
+            return;
+          }
           const res = await runWorkerLogic(ctx, funcs, {
             id,
             data: payload,
@@ -75,14 +88,24 @@ export function buildRestateService<T, R>(
             abortSignal: AbortSignal.timeout(opts.timeoutSecs * 1000),
           });
           await semaphore.release();
-          if (res.error) {
+
+          if (res.type === "rate_limit") {
+            // Handle rate limit retries without counting against retry attempts
+            await ctx.sleep(res.delayMs, "rate limit retry");
+            // Don't increment runNumber - retry without counting against attempts
+            continue;
+          }
+
+          if (res.type === "error") {
             if (res.error instanceof restate.CancelledError) {
               throw res.error;
             }
             lastError = res.error;
             // TODO: add backoff
-            await ctx.sleep(1000);
+            await ctx.sleep(1000, "error retry");
+            runNumber++;
           } else {
+            // Success
             break;
           }
         }
@@ -97,6 +120,11 @@ export function buildRestateService<T, R>(
   });
 }
 
+type RunResult<R> =
+  | { type: "success"; value: R }
+  | { type: "rate_limit"; delayMs: number }
+  | { type: "error"; error: Error };
+
 async function runWorkerLogic<T, R>(
   ctx: restate.Context,
   { run, onError, onComplete }: RunnerFuncs<T, R>,
@@ -108,18 +136,26 @@ async function runWorkerLogic<T, R>(
     numRetriesLeft: number;
     abortSignal: AbortSignal;
   },
-) {
+): Promise<RunResult<R>> {
   const res = await tryCatch(
     ctx.run(
       `main logic`,
       async () => {
-        return await run(data);
+        const res = await tryCatch(run(data));
+        if (res.error) {
+          if (res.error instanceof QueueRetryAfterError) {
+            return { type: "rate_limit" as const, delayMs: res.error.delayMs };
+          }
+          throw res.error; // Rethrow
+        }
+        return { type: "success" as const, value: res.data };
       },
       {
         maxRetryAttempts: 1,
       },
     ),
   );
+
   if (res.error) {
     await tryCatch(
       ctx.run(
@@ -134,13 +170,21 @@ async function runWorkerLogic<T, R>(
         },
       ),
     );
-    return res;
+    return { type: "error", error: res.error };
   }
 
+  const result = res.data;
+
+  if (result.type === "rate_limit") {
+    // Don't call onError or onComplete for rate limit retries
+    return result;
+  }
+
+  // Success case - call onComplete
   await tryCatch(
-    ctx.run("onComplete", async () => await onComplete?.(data, res.data), {
+    ctx.run("onComplete", async () => await onComplete?.(data, result.value), {
       maxRetryAttempts: 1,
     }),
   );
-  return res;
+  return result;
 }

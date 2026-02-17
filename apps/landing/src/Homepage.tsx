@@ -6,13 +6,24 @@ import {
   BrainCircuit,
   CheckCheck,
   Github,
+  Highlighter,
+  Plug,
+  Rocket,
+  Rss,
   Server,
+  Star,
   SunMoon,
   TextSearch,
-  WalletCards,
+  Users,
+  Workflow,
 } from "lucide-react";
 
-import { DEMO_LINK, DOCS_LINK, GITHUB_LINK } from "./constants";
+import {
+  CLOUD_SIGNUP_LINK,
+  DEMO_LINK,
+  DOCS_LINK,
+  GITHUB_LINK,
+} from "./constants";
 import NavBar from "./Navbar";
 import appStoreBadge from "/app-store-badge.png?url";
 import chromeExtensionBadge from "/chrome-extension-badge.png?url";
@@ -56,19 +67,37 @@ const featuresList = [
       "Automatically tags your bookmarks using AI for faster retrieval.",
   },
   {
-    icon: ArrowDownNarrowWide,
-    title: "Auto Fetch",
+    icon: Users,
+    title: "Collaborative Lists",
     description:
-      "Automatically fetches title, description and images for links.",
+      "Collaborate with others on shared lists for team bookmarking.",
   },
   {
-    icon: WalletCards,
-    title: "Lists",
-    description: "Sort your bookmarks into lists for better organization.",
+    icon: Rss,
+    title: "RSS Feeds",
+    description:
+      "Auto-hoard content from RSS feeds to stay updated effortlessly.",
+  },
+  {
+    icon: Workflow,
+    title: "Rule Engine",
+    description:
+      "Customize bookmark management with powerful automation rules.",
+  },
+  {
+    icon: Highlighter,
+    title: "Highlights",
+    description:
+      "Mark and store highlights from your hoarded content for quick reference.",
+  },
+  {
+    icon: Plug,
+    title: "API & Webhooks",
+    description: "Integrate with other services using REST API and webhooks.",
   },
   {
     icon: TextSearch,
-    title: "Search",
+    title: "Full Text Search",
     description: "Search through all your bookmarks using full text search.",
   },
   {
@@ -82,6 +111,12 @@ const featuresList = [
     description: "Quickly manage your bookmarks with bulk actions.",
   },
   {
+    icon: ArrowDownNarrowWide,
+    title: "Auto Fetch",
+    description:
+      "Automatically fetches title, description and images for links.",
+  },
+  {
     icon: SunMoon,
     title: "Dark Mode",
     description: "Karakeep supports dark mode for better reading experience.",
@@ -89,6 +124,29 @@ const featuresList = [
 ];
 
 const currentYear = new Date().getFullYear();
+
+function Banner() {
+  return (
+    <div className="border-b border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 px-3 py-2 text-center sm:px-4 sm:py-3">
+      <div className="container flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-slate-700 sm:gap-3 sm:text-base">
+        <div className="flex flex-wrap items-center justify-center gap-1 px-2 py-0.5 sm:px-3 sm:py-1">
+          <Rocket className="size-4 text-amber-600 sm:size-5" />
+          <span className="font-semibold text-slate-800">
+            Karakeep Cloud Public Beta is Now Live
+          </span>
+        </div>
+        <a
+          href={CLOUD_SIGNUP_LINK}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center justify-center gap-1 text-xs font-semibold text-amber-700 underline decoration-amber-400 underline-offset-2 transition-all hover:text-amber-800 sm:rounded-full sm:border sm:border-amber-300 sm:bg-amber-500 sm:px-3 sm:py-1 sm:text-sm sm:text-white sm:no-underline sm:shadow-sm sm:hover:border-amber-400 sm:hover:bg-amber-600"
+        >
+          Join Now <span className="hidden sm:inline">→</span>
+        </a>
+      </div>
+    </div>
+  );
+}
 
 function Hero() {
   return (
@@ -108,6 +166,16 @@ function Hero() {
             for the data hoarders out there!
           </p>
         </div>
+        <a
+          href={GITHUB_LINK}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm transition-all hover:border-gray-300 hover:shadow-md"
+        >
+          <Star className="size-4 fill-yellow-400 text-yellow-400" />
+          <span className="font-semibold">22k</span>
+          <span className="text-gray-500">stars on GitHub</span>
+        </a>
       </div>
       <div className="flex h-10 gap-4">
         <a
@@ -230,6 +298,7 @@ function Screenshots() {
 export default function Homepage() {
   return (
     <div className="flex min-h-screen flex-col">
+      <Banner />
       <div className="container flex flex-col pb-10">
         <NavBar />
         <Hero />

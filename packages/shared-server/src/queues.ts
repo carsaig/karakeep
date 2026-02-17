@@ -21,6 +21,7 @@ export const zCrawlLinkRequestSchema = z.object({
   bookmarkId: z.string(),
   runInference: z.boolean().optional(),
   archiveFullPage: z.boolean().optional().default(false),
+  storePdf: z.boolean().optional().default(false),
 });
 export type ZCrawlLinkRequest = z.input<typeof zCrawlLinkRequestSchema>;
 
@@ -114,8 +115,7 @@ export async function triggerSearchReindex(
     },
     {
       ...opts,
-      // BUG: restate idempotency is also against completed jobs. Disabling it for now
-      //idempotencyKey: `index:${bookmarkId}`,
+      idempotencyKey: `index:${bookmarkId}`,
     },
   );
 }

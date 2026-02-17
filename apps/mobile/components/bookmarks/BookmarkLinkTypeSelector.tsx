@@ -4,7 +4,12 @@ import { ChevronDown } from "lucide-react-native";
 
 import { BookmarkTypes, ZBookmark } from "@karakeep/shared/types/bookmarks";
 
-export type BookmarkLinkType = "browser" | "reader" | "screenshot" | "archive";
+export type BookmarkLinkType =
+  | "browser"
+  | "reader"
+  | "screenshot"
+  | "archive"
+  | "pdf";
 
 function getAvailableViewTypes(bookmark: ZBookmark): BookmarkLinkType[] {
   if (bookmark.content.type !== BookmarkTypes.LINK) {
@@ -26,6 +31,9 @@ function getAvailableViewTypes(bookmark: ZBookmark): BookmarkLinkType[] {
   ) {
     availableTypes.push("archive");
   }
+  if (bookmark.assets.some((asset) => asset.assetType === "pdf")) {
+    availableTypes.push("pdf");
+  }
 
   return availableTypes;
 }
@@ -43,7 +51,7 @@ export default function BookmarkLinkTypeSelector({
 }: BookmarkLinkTypeSelectorProps) {
   const availableTypes = getAvailableViewTypes(bookmark);
 
-  const allActions = [
+  const viewActions = [
     {
       id: "reader" as const,
       title: "Reader View",
@@ -64,9 +72,14 @@ export default function BookmarkLinkTypeSelector({
       title: "Archived Page",
       state: type === "archive" ? ("on" as const) : undefined,
     },
+    {
+      id: "pdf" as const,
+      title: "PDF",
+      state: type === "pdf" ? ("on" as const) : undefined,
+    },
   ];
 
-  const availableActions = allActions.filter((action) =>
+  const availableViewActions = viewActions.filter((action) =>
     availableTypes.includes(action.id),
   );
 
@@ -76,7 +89,7 @@ export default function BookmarkLinkTypeSelector({
         Haptics.selectionAsync();
         onChange(nativeEvent.event as BookmarkLinkType);
       }}
-      actions={availableActions}
+      actions={availableViewActions}
       shouldOpenOnLongPress={false}
     >
       <ChevronDown onPress={() => Haptics.selectionAsync()} color="gray" />

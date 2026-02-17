@@ -79,9 +79,9 @@ jobs:
           # Create branch at the upstream release commit
           git checkout -B "${BRANCH}" "${OID}"
 
-          # Always keep our repo's workflow files (ignore upstream workflow changes)
+          # Always keep fork-specific files (ignore upstream workflow changes)
           rm -rf .github/workflows
-          git checkout origin/main -- .github/workflows || true
+          git checkout origin/main -- .github/workflows docker/docker-compose.coolify.yml || true
 
           # Attempt to merge with main to detect/resolve conflicts early
           echo "Attempting to merge with main to handle conflicts..."
