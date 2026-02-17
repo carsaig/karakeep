@@ -1,6 +1,6 @@
 services:
   web:
-    image: ${WEB_IMAGE:-ghcr.io/carsaig/karakeep:latest}
+    image: ${WEB_IMAGE:-ghcr.io/karakeep-app/karakeep:release}
     restart: unless-stopped
     volumes:
       - data:/data
@@ -36,7 +36,7 @@ services:
       timeout: 5s
       retries: 3
 
-  meilisearch: 
+  meilisearch:
     image: getmeili/meilisearch:v1.13.3
     restart: unless-stopped
     environment:
@@ -51,5 +51,5 @@ services:
       retries: 3
 
 volumes:
-  meilisearch: 
+  meilisearch:
   data:
