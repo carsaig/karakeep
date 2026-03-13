@@ -1,0 +1,102 @@
+name: Deploy Upstream Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get latest upstream release version
+        id: upstream
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/karakeep-app/karakeep/releases/latest | jq -r .tag_name | sed 's/^v//' | tr -d '\r\n')
+          echo "version=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream version: ${LATEST_TAG}"
+
+      - name: Load Coolify secrets from 1Password
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          COOLIFY_WEBHOOK_URL: op://SECRETS/Karakeep Bookmarks/WEBHOOK
+          COOLIFY_DEPLOYMENT_TOKEN: op://SECRETS/Karakeep Bookmarks/DEPLOYMENT_TOKEN
+          COOLIFY_BASE_URL: op://SECRETS/Coolify/BASE_URL
+          COOLIFY_APPLICATION_UUID: op://SECRETS/Karakeep Bookmarks/APPLICATION_UUID
+
+      - name: Check current deployed version
+        id: current
+        continue-on-error: true
+        run: |
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" \
+            "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs")
+
+          CURRENT_VERSION=$(echo "$RESPONSE" | jq -r '([.[] | select(.key == "SERVER_VERSION")] | first | .value) // "unknown"' 2>/dev/null | tr -d '\r\n')
+          if [ -z "$CURRENT_VERSION" ]; then
+            CURRENT_VERSION="unknown"
+          fi
+          echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Current deployed version: ${CURRENT_VERSION}"
+
+      - name: Deploy decision
+        id: decision
+        run: |
+          CURRENT="${{ steps.current.outputs.current_version }}"
+          UPSTREAM="${{ steps.upstream.outputs.version }}"
+          TRIGGER="${{ github.event_name }}"
+
+          if [ "$CURRENT" = "$UPSTREAM" ] && [ "$TRIGGER" != "workflow_dispatch" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "## Deployment Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "Current version (\`${CURRENT}\`) matches upstream (\`${UPSTREAM}\`). Nothing to deploy." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Deploying: ${CURRENT} -> ${UPSTREAM}"
+          fi
+
+      - name: Update Coolify environment variables
+        if: steps.decision.outputs.skip != 'true'
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          IMAGE="ghcr.io/karakeep-app/karakeep:${VERSION}"
+
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
+            -X PATCH "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs/bulk" \
+            -H "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"data\": [
+                {\"key\": \"WEB_IMAGE\", \"value\": \"${IMAGE}\", \"is_preview\": false},
+                {\"key\": \"SERVER_VERSION\", \"value\": \"${VERSION}\", \"is_preview\": false}
+              ]
+            }")
+
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "Environment variables updated successfully"
+            echo "## Environment Variables Updated" >> $GITHUB_STEP_SUMMARY
+            echo "**WEB_IMAGE:** \`${IMAGE}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**SERVER_VERSION:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Failed to update environment variables. HTTP Code: $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+
+      - name: Trigger Coolify deployment
+        if: steps.decision.outputs.skip != 'true'
+        run: |
+          curl --request GET "$COOLIFY_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN"
+
+          echo "## Deployment Triggered" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.upstream.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`ghcr.io/karakeep-app/karakeep:${{ steps.upstream.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY

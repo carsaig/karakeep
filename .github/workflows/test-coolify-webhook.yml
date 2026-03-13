@@ -1,0 +1,194 @@
+name: Test Coolify Webhook Integration
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      test_payload:
+        description: 'Include test payload in webhook call'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  test-webhook:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Load Coolify secrets from 1Password
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          COOLIFY_WEBHOOK_URL: op://SECRETS/Karakeep/WEBHOOK
+          COOLIFY_DEPLOYMENT_TOKEN: op://SECRETS/Karakeep/DEPLOYMENT_TOKEN
+          COOLIFY_BASE_URL: op://SECRETS/Coolify/BASE_URL
+          COOLIFY_APPLICATION_UUID: op://SECRETS/Karakeep/APPLICATION_UUID
+
+      - name: Verify 1Password secret loading
+        run: |
+          echo "## 🔍 1Password Integration Test" >> $GITHUB_STEP_SUMMARY
+          if [ -z "$COOLIFY_WEBHOOK_URL" ]; then
+            echo "❌ **FAILED**: COOLIFY_WEBHOOK_URL is empty or not loaded" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Webhook URL not loaded from 1Password"
+            exit 1
+          elif [ -z "$COOLIFY_DEPLOYMENT_TOKEN" ]; then
+            echo "❌ **FAILED**: COOLIFY_DEPLOYMENT_TOKEN is empty or not loaded" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Coolify deployment token not loaded from 1Password"
+            exit 1
+          elif [ -z "$COOLIFY_BASE_URL" ]; then
+            echo "❌ **FAILED**: COOLIFY_BASE_URL is empty or not loaded" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Coolify base URL not loaded from 1Password"
+            exit 1
+          elif [ -z "$COOLIFY_APPLICATION_UUID" ]; then
+            echo "❌ **FAILED**: COOLIFY_APPLICATION_UUID is empty or not loaded" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Coolify application UUID not loaded from 1Password"
+            exit 1
+          else
+            echo "✅ **SUCCESS**: All Coolify secrets loaded from 1Password" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Webhook URL loaded successfully (length: ${#COOLIFY_WEBHOOK_URL} characters)"
+            echo "✅ Coolify deployment token loaded successfully (length: ${#COOLIFY_DEPLOYMENT_TOKEN} characters)"
+            echo "✅ Coolify base URL loaded successfully (length: ${#COOLIFY_BASE_URL} characters)"
+            echo "✅ Coolify application UUID loaded successfully (length: ${#COOLIFY_APPLICATION_UUID} characters)"
+            # Show first and last few characters for verification without exposing full secrets
+            echo "URL preview: ${COOLIFY_WEBHOOK_URL:0:20}...${COOLIFY_WEBHOOK_URL: -10}"
+            echo "Token preview: ${COOLIFY_DEPLOYMENT_TOKEN:0:8}...${COOLIFY_DEPLOYMENT_TOKEN: -4}"
+            echo "Base URL preview: ${COOLIFY_BASE_URL:0:15}...${COOLIFY_BASE_URL: -5}"
+            echo "App UUID preview: ${COOLIFY_APPLICATION_UUID:0:8}...${COOLIFY_APPLICATION_UUID: -4}"
+          fi
+
+      - name: Test environment variable update
+        run: |
+          echo "## 🔧 Environment Variable Update Test" >> $GITHUB_STEP_SUMMARY
+          echo "Testing Coolify environment variable update..."
+
+          # Use a test version for the test workflow
+          TEST_VERSION="test-$(date +%s)"
+          echo "**Test Version:** \`$TEST_VERSION\`" >> $GITHUB_STEP_SUMMARY
+
+          # Update SERVER_VERSION environment variable in Coolify using bulk update endpoint
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
+            -X PATCH "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs/bulk" \
+            -H "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "data": [{
+                "key": "SERVER_VERSION",
+                "value": "'$TEST_VERSION'",
+                "is_preview": false
+              }]
+            }')
+
+          # Extract HTTP code and check response
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d')
+
+          echo "API Response Code: $HTTP_CODE"
+          echo "API Response Body: $RESPONSE_BODY"
+
+          echo "**API Response Code:** \`$HTTP_CODE\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$RESPONSE_BODY" ] && [ "$RESPONSE_BODY" != "" ]; then
+            echo "**API Response:**" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "$RESPONSE_BODY" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ **SUCCESS**: Environment variable updated successfully to $TEST_VERSION" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Environment variable SERVER_VERSION updated successfully to $TEST_VERSION"
+          else
+            echo "❌ **FAILED**: Failed to update environment variable. HTTP Code: $HTTP_CODE" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Failed to update environment variable. HTTP Code: $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+
+      - name: Test webhook connectivity (HEAD request)
+        run: |
+          echo "## 🌐 Webhook Connectivity Test" >> $GITHUB_STEP_SUMMARY
+          echo "Testing webhook endpoint connectivity..."
+          
+          # Test basic connectivity with HEAD request (no payload)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X HEAD "$COOLIFY_WEBHOOK_URL" || echo "000")
+          
+          echo "HTTP Response Code: $HTTP_CODE"
+          echo "**HTTP Response Code:** \`$HTTP_CODE\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "❌ **FAILED**: Could not connect to webhook endpoint" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Network connectivity issue or invalid URL"
+          elif [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ **SUCCESS**: Webhook endpoint is reachable" >> $GITHUB_STEP_SUMMARY
+          elif [ "$HTTP_CODE" = "405" ]; then
+            echo "⚠️ **INFO**: Method not allowed (expected for HEAD request)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **WARNING**: Unexpected response code: $HTTP_CODE" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Test webhook call (Coolify API format)
+        run: |
+          echo "## 🚀 Webhook Call Test" >> $GITHUB_STEP_SUMMARY
+          echo "Making test webhook call using Coolify API format..."
+
+          # Make the webhook call using GET request with Bearer token (as per Coolify docs)
+          echo "Calling webhook with GET request and Bearer token..."
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}" \
+            --request GET "$COOLIFY_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" 2>&1)
+          
+          # Extract HTTP code and response time
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          TIME_TOTAL=$(echo "$RESPONSE" | grep "TIME_TOTAL:" | cut -d: -f2)
+          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d' | sed '/TIME_TOTAL:/d')
+          
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response Time: ${TIME_TOTAL}s"
+          echo "Response Body: $RESPONSE_BODY"
+          
+          # Update summary
+          echo "**HTTP Response Code:** \`$HTTP_CODE\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Response Time:** \`${TIME_TOTAL}s\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "$RESPONSE_BODY" ] && [ "$RESPONSE_BODY" != "" ]; then
+            echo "**Response Body:**" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "$RESPONSE_BODY" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Evaluate result
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
+            echo "✅ **SUCCESS**: Webhook call successful" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Webhook call successful!"
+          elif [ "$HTTP_CODE" = "401" ]; then
+            echo "❌ **FAILED**: Authentication error (401 Unauthorized)" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Check if webhook URL includes correct authentication token"
+            exit 1
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "❌ **FAILED**: Webhook endpoint not found (404)" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Check if webhook URL is correct"
+            exit 1
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "❌ **FAILED**: Network error or timeout" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Could not connect to webhook endpoint"
+            exit 1
+          else
+            echo "⚠️ **WARNING**: Unexpected response code: $HTTP_CODE" >> $GITHUB_STEP_SUMMARY
+            echo "WARNING: Webhook call returned unexpected response"
+          fi
+
+      - name: Test summary
+        run: |
+          echo "## 📋 Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test completed at:** \`$(date -u '+%Y-%m-%d %H:%M:%S UTC')\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow Run:** [\`${{ github.run_id }}\`](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "- If webhook test succeeded, check Coolify deployment logs" >> $GITHUB_STEP_SUMMARY
+          echo "- If webhook test failed, verify webhook URL and authentication" >> $GITHUB_STEP_SUMMARY
+          echo "- Compare this test with the main workflow's webhook call" >> $GITHUB_STEP_SUMMARY
