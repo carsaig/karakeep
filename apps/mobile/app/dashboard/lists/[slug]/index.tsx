@@ -3,16 +3,19 @@ import * as Haptics from "expo-haptics";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import UpdatingBookmarkList from "@/components/bookmarks/UpdatingBookmarkList";
 import FullPageError from "@/components/FullPageError";
-import CustomSafeAreaView from "@/components/ui/CustomSafeAreaView";
 import FullPageSpinner from "@/components/ui/FullPageSpinner";
-import { api } from "@/lib/trpc";
+import { useArchiveFilter } from "@/lib/hooks";
+import { useMenuIconColors } from "@/lib/useMenuIconColors";
 import { MenuView } from "@react-native-menu/menu";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Ellipsis } from "lucide-react-native";
 
+import { useTRPC } from "@karakeep/shared-react/trpc";
 import { ZBookmarkList } from "@karakeep/shared/types/lists";
 
 export default function ListView() {
   const { slug } = useLocalSearchParams();
+  const api = useTRPC();
   if (typeof slug !== "string") {
     throw new Error("Unexpected param type");
   }
@@ -20,15 +23,15 @@ export default function ListView() {
     data: list,
     error,
     refetch,
-  } = api.lists.get.useQuery({ listId: slug });
+  } = useQuery(api.lists.get.queryOptions({ listId: slug }));
+  const { archived, isLoading: isSettingsLoading } = useArchiveFilter();
 
   return (
-    <CustomSafeAreaView>
+    <>
       <Stack.Screen
         options={{
           headerTitle: list ? `${list.icon} ${list.name}` : "",
           headerBackTitle: "Back",
-          headerLargeTitle: true,
           headerRight: () => (
             <ListActionsMenu listId={slug} role={list?.userRole ?? "viewer"} />
           ),
@@ -36,18 +39,17 @@ export default function ListView() {
       />
       {error ? (
         <FullPageError error={error.message} onRetry={() => refetch()} />
-      ) : list ? (
-        <View>
-          <UpdatingBookmarkList
-            query={{
-              listId: list.id,
-            }}
-          />
-        </View>
+      ) : list && !isSettingsLoading ? (
+        <UpdatingBookmarkList
+          query={{
+            listId: list.id,
+            archived,
+          }}
+        />
       ) : (
         <FullPageSpinner />
       )}
-    </CustomSafeAreaView>
+    </>
   );
 }
 
@@ -58,17 +60,23 @@ function ListActionsMenu({
   listId: string;
   role: ZBookmarkList["userRole"];
 }) {
-  const { mutate: deleteList } = api.lists.delete.useMutation({
-    onSuccess: () => {
-      router.replace("/dashboard/lists");
-    },
-  });
+  const api = useTRPC();
+  const { menuIconColor, destructiveMenuIconColor } = useMenuIconColors();
+  const { mutate: deleteList } = useMutation(
+    api.lists.delete.mutationOptions({
+      onSuccess: () => {
+        router.replace("/dashboard/lists");
+      },
+    }),
+  );
 
-  const { mutate: leaveList } = api.lists.leaveList.useMutation({
-    onSuccess: () => {
-      router.replace("/dashboard/lists");
-    },
-  });
+  const { mutate: leaveList } = useMutation(
+    api.lists.leaveList.mutationOptions({
+      onSuccess: () => {
+        router.replace("/dashboard/lists");
+      },
+    }),
+  );
 
   const handleDelete = () => {
     Alert.alert("Delete List", "Are you sure you want to delete this list?", [
@@ -112,9 +120,15 @@ function ListActionsMenu({
           attributes: {
             hidden: role !== "owner",
           },
+          image: Platform.select({
+            ios: "square.and.pencil",
+          }),
+          imageColor: Platform.select({
+            ios: menuIconColor,
+          }),
         },
         {
-          id: "delete",
+          id: "delete_list",
           title: "Delete List",
           attributes: {
             destructive: true,
@@ -122,6 +136,9 @@ function ListActionsMenu({
           },
           image: Platform.select({
             ios: "trash",
+          }),
+          imageColor: Platform.select({
+            ios: destructiveMenuIconColor,
           }),
         },
         {
@@ -131,10 +148,16 @@ function ListActionsMenu({
             destructive: true,
             hidden: role === "owner",
           },
+          image: Platform.select({
+            ios: "arrowshape.turn.up.left",
+          }),
+          imageColor: Platform.select({
+            ios: destructiveMenuIconColor,
+          }),
         },
       ]}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "delete") {
+        if (nativeEvent.event === "delete_list") {
           handleDelete();
         } else if (nativeEvent.event === "leave") {
           handleLeave();
@@ -144,7 +167,9 @@ function ListActionsMenu({
       }}
       shouldOpenOnLongPress={false}
     >
-      <Ellipsis onPress={() => Haptics.selectionAsync()} color="gray" />
+      <View className="my-auto px-4">
+        <Ellipsis onPress={() => Haptics.selectionAsync()} color="gray" />
+      </View>
     </MenuView>
   );
 }

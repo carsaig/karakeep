@@ -1,9 +1,8 @@
 import type { AppStateStatus } from "react-native";
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect } from "react";
 import { AppState, Platform } from "react-native";
-import { useNavigation, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { Stack } from "expo-router/stack";
-import { StyledStack } from "@/components/navigation/stack";
 import { useIsLoggedIn } from "@/lib/session";
 import { focusManager } from "@tanstack/react-query";
 
@@ -15,14 +14,6 @@ function onAppStateChange(status: AppStateStatus) {
 
 export default function Dashboard() {
   const router = useRouter();
-
-  const navigation = useNavigation();
-  // Hide the header on the parent screen
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerShown: false,
-    });
-  }, [navigation]);
 
   const isLoggedIn = useIsLoggedIn();
   useEffect(() => {
@@ -38,11 +29,23 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <StyledStack
-      contentClassName="bg-gray-100 dark:bg-background"
-      headerClassName="dark:text-white"
+    <Stack
       screenOptions={{
-        headerTransparent: true,
+        ...Platform.select({
+          ios: {
+            headerTransparent: true,
+            headerBlurEffect: "systemMaterial",
+            headerLargeTitle: true,
+            headerLargeTitleShadowVisible: false,
+            headerLargeStyle: { backgroundColor: "transparent" },
+          },
+          android: {
+            headerStyle: {
+              backgroundColor: "transparent",
+            },
+          },
+        }),
+        headerShadowVisible: false,
       }}
     >
       <Stack.Screen
@@ -52,9 +55,8 @@ export default function Dashboard() {
       <Stack.Screen
         name="favourites"
         options={{
-          headerTitle: "",
+          headerTitle: "⭐️ Favourites",
           headerBackTitle: "Back",
-          headerTransparent: true,
         }}
       />
       <Stack.Screen
@@ -62,7 +64,7 @@ export default function Dashboard() {
         options={{
           headerTitle: "",
           headerBackTitle: "Back",
-          headerTransparent: true,
+          headerLargeTitle: false,
         }}
       />
       <Stack.Screen
@@ -70,34 +72,53 @@ export default function Dashboard() {
         options={{
           headerTitle: "New Bookmark",
           headerBackTitle: "Back",
-          headerTransparent: true,
-          presentation: "modal",
+          headerTransparent: false,
+          headerLargeTitle: false,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
+          sheetAllowedDetents: [0.35, 0.7],
         }}
       />
       <Stack.Screen
         name="bookmarks/[slug]/manage_tags"
         options={{
           headerTitle: "Manage Tags",
-          headerBackTitle: "Back",
-          headerTransparent: true,
-          presentation: "modal",
+          headerTransparent: false,
+          headerLargeTitle: false,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
         }}
       />
       <Stack.Screen
         name="bookmarks/[slug]/manage_lists"
         options={{
           headerTitle: "Manage Lists",
-          headerBackTitle: "Back",
-          headerTransparent: true,
-          presentation: "modal",
+          headerTransparent: false,
+          headerLargeTitle: false,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
         }}
       />
       <Stack.Screen
         name="bookmarks/[slug]/info"
         options={{
-          headerBackTitle: "Back",
-          headerTransparent: true,
-          presentation: "modal",
+          headerTitle: "Edit Bookmark",
+          headerTransparent: false,
+          headerLargeTitle: false,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
         }}
       />
       <Stack.Screen
@@ -105,8 +126,13 @@ export default function Dashboard() {
         options={{
           headerTitle: "New List",
           headerBackTitle: "Back",
-          headerTransparent: true,
-          presentation: "modal",
+          headerLargeTitle: false,
+          headerTransparent: false,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
         }}
       />
       <Stack.Screen
@@ -114,16 +140,20 @@ export default function Dashboard() {
         options={{
           headerTitle: "Edit List",
           headerBackTitle: "Back",
-          headerTransparent: true,
-          presentation: "modal",
+          headerLargeTitle: false,
+          headerTransparent: false,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
         }}
       />
       <Stack.Screen
         name="archive"
         options={{
-          headerTitle: "",
+          headerTitle: "🗄️ Archive",
           headerBackTitle: "Back",
-          headerTransparent: true,
         }}
       />
       <Stack.Screen
@@ -131,8 +161,9 @@ export default function Dashboard() {
         options={{
           headerTitle: "",
           headerBackTitle: "",
-          headerTransparent: true,
-          headerShown: false,
+          headerShown: true,
+          headerTransparent: false,
+          headerLargeTitle: false,
           animation: "fade_from_bottom",
           animationDuration: 100,
         }}
@@ -161,6 +192,6 @@ export default function Dashboard() {
           headerBackTitle: "Back",
         }}
       />
-    </StyledStack>
+    </Stack>
   );
 }

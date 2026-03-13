@@ -1,5 +1,7 @@
 import { RefinementCtx, z } from "zod";
 
+import { zBookmarkSourceSchema } from "./bookmarks";
+
 // Events
 const zBookmarkAddedEvent = z.object({
   type: z.literal("bookmarkAdded"),
@@ -59,6 +61,16 @@ const zUrlDoesNotContainCondition = z.object({
   str: z.string(),
 });
 
+const zTitleContainsCondition = z.object({
+  type: z.literal("titleContains"),
+  str: z.string(),
+});
+
+const zTitleDoesNotContainCondition = z.object({
+  type: z.literal("titleDoesNotContain"),
+  str: z.string(),
+});
+
 const zImportedFromFeedCondition = z.object({
   type: z.literal("importedFromFeed"),
   feedId: z.string(),
@@ -67,6 +79,11 @@ const zImportedFromFeedCondition = z.object({
 const zBookmarkTypeIsCondition = z.object({
   type: z.literal("bookmarkTypeIs"),
   bookmarkType: z.enum(["link", "text", "asset"]),
+});
+
+const zBookmarkSourceIsCondition = z.object({
+  type: z.literal("bookmarkSourceIs"),
+  source: zBookmarkSourceSchema,
 });
 
 const zHasTagCondition = z.object({
@@ -86,8 +103,11 @@ const nonRecursiveCondition = z.discriminatedUnion("type", [
   zAlwaysTrueCondition,
   zUrlContainsCondition,
   zUrlDoesNotContainCondition,
+  zTitleContainsCondition,
+  zTitleDoesNotContainCondition,
   zImportedFromFeedCondition,
   zBookmarkTypeIsCondition,
+  zBookmarkSourceIsCondition,
   zHasTagCondition,
   zIsFavouritedCondition,
   zIsArchivedCondition,
@@ -105,8 +125,11 @@ export const zRuleEngineConditionSchema: z.ZodType<RuleEngineCondition> =
       zAlwaysTrueCondition,
       zUrlContainsCondition,
       zUrlDoesNotContainCondition,
+      zTitleContainsCondition,
+      zTitleDoesNotContainCondition,
       zImportedFromFeedCondition,
       zBookmarkTypeIsCondition,
+      zBookmarkSourceIsCondition,
       zHasTagCondition,
       zIsFavouritedCondition,
       zIsArchivedCondition,
@@ -230,6 +253,7 @@ const ruleValidaitorFn = (
     switch (condition.type) {
       case "alwaysTrue":
       case "bookmarkTypeIs":
+      case "bookmarkSourceIs":
       case "isFavourited":
       case "isArchived":
         return true;
@@ -239,6 +263,17 @@ const ruleValidaitorFn = (
           ctx.addIssue({
             code: "custom",
             message: "You must specify a URL for this condition type",
+            path: ["condition", "str"],
+          });
+          return false;
+        }
+        return true;
+      case "titleContains":
+      case "titleDoesNotContain":
+        if (condition.str.length == 0) {
+          ctx.addIssue({
+            code: "custom",
+            message: "You must specify a title for this condition type",
             path: ["condition", "str"],
           });
           return false;

@@ -1,14 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { SettingsPage } from "@/components/settings/SettingsPage";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { WrappedModal } from "@/components/wrapped";
 import { useTranslation } from "@/lib/i18n/client";
-import { api } from "@/lib/trpc";
+import { useQuery } from "@tanstack/react-query";
 import {
   Archive,
   BarChart3,
@@ -28,13 +27,13 @@ import {
   List,
   Rss,
   Smartphone,
-  Sparkles,
   TrendingUp,
   Upload,
   Zap,
 } from "lucide-react";
 import { z } from "zod";
 
+import { useTRPC } from "@karakeep/shared-react/trpc";
 import { zBookmarkSourceSchema } from "@karakeep/shared/types/bookmarks";
 
 type BookmarkSource = z.infer<typeof zBookmarkSourceSchema>;
@@ -162,11 +161,10 @@ function StatCard({
 }
 
 export default function StatsPage() {
+  const api = useTRPC();
   const { t } = useTranslation();
-  const { data: stats, isLoading } = api.users.stats.useQuery();
-  const { data: userSettings } = api.users.settings.useQuery();
-  const { data: hasWrapped } = api.users.hasWrapped.useQuery();
-  const [showWrapped, setShowWrapped] = useState(false);
+  const { data: stats, isLoading } = useQuery(api.users.stats.queryOptions());
+  const { data: userSettings } = useQuery(api.users.settings.queryOptions());
 
   const maxHourlyActivity = useMemo(() => {
     if (!stats) return 0;
@@ -188,16 +186,10 @@ export default function StatsPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">
-            {t("settings.stats.usage_statistics")}
-          </h1>
-          <p className="text-muted-foreground">
-            {t("settings.stats.insights_description")}
-          </p>
-        </div>
-
+      <SettingsPage
+        title={t("settings.stats.usage_statistics")}
+        description={t("settings.stats.insights_description")}
+      >
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <Card key={i}>
@@ -211,7 +203,7 @@ export default function StatsPage() {
             </Card>
           ))}
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
@@ -226,31 +218,10 @@ export default function StatsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">
-            {t("settings.stats.usage_statistics")}
-          </h1>
-          <p className="text-muted-foreground">
-            Insights into your bookmarking habits and collection
-            {userSettings?.timezone && userSettings.timezone !== "UTC" && (
-              <span className="block text-sm">
-                Times shown in {userSettings.timezone} timezone
-              </span>
-            )}
-          </p>
-        </div>
-        {hasWrapped && (
-          <Button onClick={() => setShowWrapped(true)} className="gap-2">
-            <Sparkles className="h-4 w-4" />
-            View Your 2025 Wrapped
-          </Button>
-        )}
-      </div>
-
-      <WrappedModal open={showWrapped} onClose={() => setShowWrapped(false)} />
-
+    <SettingsPage
+      title={t("settings.stats.usage_statistics")}
+      description="Insights into your bookmarking habits and collection"
+    >
       {/* Overview Stats */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -302,7 +273,6 @@ export default function StatsPage() {
           description={t("settings.stats.overview.bookmarks_added")}
         />
       </div>
-
       <div className="grid gap-6 md:grid-cols-2">
         {/* Bookmark Types */}
         <Card>
@@ -545,7 +515,6 @@ export default function StatsPage() {
           </CardContent>
         </Card>
       </div>
-
       {/* Activity Patterns */}
       <div className="grid gap-6 md:grid-cols-2">
         {/* Hourly Activity */}
@@ -596,7 +565,6 @@ export default function StatsPage() {
           </CardContent>
         </Card>
       </div>
-
       {/* Asset Storage */}
       {stats.assetsByType.length > 0 && (
         <Card>
@@ -635,6 +603,6 @@ export default function StatsPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </SettingsPage>
   );
 }

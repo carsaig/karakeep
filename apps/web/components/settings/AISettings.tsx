@@ -1,14 +1,9 @@
 "use client";
 
+import React from "react";
+import { TagsEditor } from "@/components/dashboard/bookmarks/TagsEditor";
 import { ActionButton } from "@/components/ui/action-button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Field,
   FieldContent,
@@ -40,15 +35,18 @@ import { toast } from "@/components/ui/sonner";
 import { Switch } from "@/components/ui/switch";
 import { useClientConfig } from "@/lib/clientConfig";
 import { useTranslation } from "@/lib/i18n/client";
-import { api } from "@/lib/trpc";
 import { useUserSettings } from "@/lib/userSettings";
 import { cn } from "@/lib/utils";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Plus, Save, Trash2 } from "lucide-react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
+import type { ZBookmarkTags } from "@karakeep/shared/types/tags";
+import { useDebounce } from "@karakeep/shared-react/hooks/use-debounce";
 import { useUpdateUserSettings } from "@karakeep/shared-react/hooks/users";
+import { useTRPC } from "@karakeep/shared-react/trpc";
 import {
   buildImagePrompt,
   buildSummaryPromptUntruncated,
@@ -61,26 +59,7 @@ import {
 } from "@karakeep/shared/types/prompts";
 import { zUpdateUserSettingsSchema } from "@karakeep/shared/types/users";
 
-function SettingsSection({
-  title,
-  description,
-  children,
-}: {
-  title?: string;
-  description?: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        {title && <CardTitle>{title}</CardTitle>}
-        {description && <CardDescription>{description}</CardDescription>}
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
+import { SettingsPage, SettingsSection } from "./SettingsPage";
 
 export function AIPreferences() {
   const { t } = useTranslation();
@@ -339,9 +318,146 @@ export function TagStyleSelector() {
   );
 }
 
-export function PromptEditor() {
+export function CuratedTagsSelector() {
+  const api = useTRPC();
   const { t } = useTranslation();
-  const apiUtils = api.useUtils();
+  const settings = useUserSettings();
+
+  const { mutate: updateSettings, isPending: isUpdatingCuratedTags } =
+    useUpdateUserSettings({
+      onSuccess: () => {
+        toast({
+          description: t("settings.ai.curated_tags_updated"),
+        });
+      },
+      onError: () => {
+        toast({
+          description: t("settings.ai.curated_tags_update_failed"),
+          variant: "destructive",
+        });
+      },
+    });
+
+  const areTagIdsEqual = React.useCallback((a: string[], b: string[]) => {
+    return a.length === b.length && a.every((id, index) => id === b[index]);
+  }, []);
+
+  const curatedTagIds = React.useMemo(
+    () => settings?.curatedTagIds ?? [],
+    [settings?.curatedTagIds],
+  );
+  const [localCuratedTagIds, setLocalCuratedTagIds] =
+    React.useState<string[]>(curatedTagIds);
+  const debouncedCuratedTagIds = useDebounce(localCuratedTagIds, 300);
+  const lastServerCuratedTagIdsRef = React.useRef(curatedTagIds);
+  const lastSubmittedCuratedTagIdsRef = React.useRef<string[] | null>(null);
+
+  React.useEffect(() => {
+    const hadUnsyncedLocalChanges = !areTagIdsEqual(
+      localCuratedTagIds,
+      lastServerCuratedTagIdsRef.current,
+    );
+
+    if (
+      !hadUnsyncedLocalChanges &&
+      !areTagIdsEqual(localCuratedTagIds, curatedTagIds)
+    ) {
+      setLocalCuratedTagIds(curatedTagIds);
+    }
+
+    lastServerCuratedTagIdsRef.current = curatedTagIds;
+  }, [areTagIdsEqual, curatedTagIds, localCuratedTagIds]);
+
+  React.useEffect(() => {
+    if (isUpdatingCuratedTags) {
+      return;
+    }
+
+    if (areTagIdsEqual(debouncedCuratedTagIds, curatedTagIds)) {
+      lastSubmittedCuratedTagIdsRef.current = null;
+      return;
+    }
+
+    if (
+      lastSubmittedCuratedTagIdsRef.current &&
+      areTagIdsEqual(
+        lastSubmittedCuratedTagIdsRef.current,
+        debouncedCuratedTagIds,
+      )
+    ) {
+      return;
+    }
+
+    lastSubmittedCuratedTagIdsRef.current = debouncedCuratedTagIds;
+    updateSettings({
+      curatedTagIds:
+        debouncedCuratedTagIds.length > 0 ? debouncedCuratedTagIds : null,
+    });
+  }, [
+    areTagIdsEqual,
+    curatedTagIds,
+    debouncedCuratedTagIds,
+    isUpdatingCuratedTags,
+    updateSettings,
+  ]);
+
+  // Fetch selected tags to display their names
+  const { data: selectedTagsData } = useQuery(
+    api.tags.list.queryOptions(
+      { ids: localCuratedTagIds },
+      { enabled: localCuratedTagIds.length > 0 },
+    ),
+  );
+
+  const selectedTags: ZBookmarkTags[] = React.useMemo(() => {
+    const tagsMap = new Map(
+      (selectedTagsData?.tags ?? []).map((tag) => [tag.id, tag]),
+    );
+    // Preserve the order from curatedTagIds instead of server sort order
+    return localCuratedTagIds
+      .map((id) => tagsMap.get(id))
+      .filter((tag): tag is NonNullable<typeof tag> => tag != null)
+      .map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        attachedBy: "human" as const,
+      }));
+  }, [selectedTagsData?.tags, localCuratedTagIds]);
+
+  return (
+    <SettingsSection
+      title={t("settings.ai.curated_tags")}
+      description={t("settings.ai.curated_tags_description")}
+    >
+      <TagsEditor
+        tags={selectedTags}
+        placeholder="Select curated tags..."
+        onAttach={(tag) => {
+          const tagId = tag.tagId;
+          if (tagId) {
+            setLocalCuratedTagIds((prev) => {
+              if (prev.includes(tagId)) {
+                return prev;
+              }
+              return [...prev, tagId];
+            });
+          }
+        }}
+        onDetach={(tag) => {
+          setLocalCuratedTagIds((prev) => {
+            return prev.filter((id) => id !== tag.tagId);
+          });
+        }}
+        allowCreation={false}
+      />
+    </SettingsSection>
+  );
+}
+
+export function PromptEditor() {
+  const api = useTRPC();
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   const form = useForm<z.infer<typeof zNewPromptSchema>>({
     resolver: zodResolver(zNewPromptSchema),
@@ -351,15 +467,16 @@ export function PromptEditor() {
     },
   });
 
-  const { mutateAsync: createPrompt, isPending: isCreating } =
-    api.prompts.create.useMutation({
+  const { mutateAsync: createPrompt, isPending: isCreating } = useMutation(
+    api.prompts.create.mutationOptions({
       onSuccess: () => {
         toast({
           description: "Prompt has been created!",
         });
-        apiUtils.prompts.list.invalidate();
+        queryClient.invalidateQueries(api.prompts.list.pathFilter());
       },
-    });
+    }),
+  );
 
   return (
     <Form {...form}>
@@ -441,26 +558,29 @@ export function PromptEditor() {
 }
 
 export function PromptRow({ prompt }: { prompt: ZPrompt }) {
+  const api = useTRPC();
   const { t } = useTranslation();
-  const apiUtils = api.useUtils();
-  const { mutateAsync: updatePrompt, isPending: isUpdating } =
-    api.prompts.update.useMutation({
+  const queryClient = useQueryClient();
+  const { mutateAsync: updatePrompt, isPending: isUpdating } = useMutation(
+    api.prompts.update.mutationOptions({
       onSuccess: () => {
         toast({
           description: "Prompt has been updated!",
         });
-        apiUtils.prompts.list.invalidate();
+        queryClient.invalidateQueries(api.prompts.list.pathFilter());
       },
-    });
-  const { mutate: deletePrompt, isPending: isDeleting } =
-    api.prompts.delete.useMutation({
+    }),
+  );
+  const { mutate: deletePrompt, isPending: isDeleting } = useMutation(
+    api.prompts.delete.mutationOptions({
       onSuccess: () => {
         toast({
           description: "Prompt has been deleted!",
         });
-        apiUtils.prompts.list.invalidate();
+        queryClient.invalidateQueries(api.prompts.list.pathFilter());
       },
-    });
+    }),
+  );
 
   const form = useForm<z.infer<typeof zUpdatePromptSchema>>({
     resolver: zodResolver(zUpdatePromptSchema),
@@ -574,8 +694,11 @@ export function PromptRow({ prompt }: { prompt: ZPrompt }) {
 }
 
 export function TaggingRules() {
+  const api = useTRPC();
   const { t } = useTranslation();
-  const { data: prompts, isLoading } = api.prompts.list.useQuery();
+  const { data: prompts, isLoading } = useQuery(
+    api.prompts.list.queryOptions(),
+  );
 
   return (
     <SettingsSection
@@ -600,15 +723,86 @@ export function TaggingRules() {
   );
 }
 
+/**
+ * Expand $tags / $aiTags / $userTags placeholders in custom prompt texts so
+ * that the preview panel shows exactly what will be sent to the AI.
+ *
+ * The logic mirrors apps/workers/workers/inference/tagging.ts
+ * `replaceTagsPlaceholders` to keep the preview accurate.
+ */
+function expandTagPlaceholders(
+  texts: string[],
+  tags: { name: string; numBookmarksByAttachedType: Record<string, number> }[],
+): string[] {
+  const tagsStr = `[${tags.map((t) => t.name).join(", ")}]`;
+  const aiTagsStr = `[${tags
+    .filter((t) => t.numBookmarksByAttachedType["human"] ?? true)
+    .map((t) => t.name)
+    .join(", ")}]`;
+  const userTagsStr = `[${tags
+    .filter((t) => t.numBookmarksByAttachedType["human"] ?? false)
+    .map((t) => t.name)
+    .join(", ")}]`;
+
+  return texts.map((text) =>
+    text
+      .replaceAll("$tags", tagsStr)
+      .replaceAll("$aiTags", aiTagsStr)
+      .replaceAll("$userTags", userTagsStr),
+  );
+}
+
+function hasTagPlaceholder(texts: string[]): boolean {
+  return texts.some(
+    (t) =>
+      t.includes("$tags") || t.includes("$aiTags") || t.includes("$userTags"),
+  );
+}
+
 export function PromptDemo() {
+  const api = useTRPC();
   const { t } = useTranslation();
-  const { data: prompts } = api.prompts.list.useQuery();
+  const { data: prompts } = useQuery(api.prompts.list.queryOptions());
   const settings = useUserSettings();
   const clientConfig = useClientConfig();
 
   const tagStyle = settings?.tagStyle ?? "as-generated";
+  const curatedTagIds = settings?.curatedTagIds ?? [];
+  const { data: tagsData } = useQuery(
+    api.tags.list.queryOptions(
+      { ids: curatedTagIds },
+      { enabled: curatedTagIds.length > 0 },
+    ),
+  );
   const inferredTagLang =
     settings?.inferredTagLang ?? clientConfig.inference.inferredTagLang;
+
+  // Resolve curated tag names for preview
+  const curatedTagNames =
+    curatedTagIds.length > 0 && tagsData?.tags
+      ? curatedTagIds
+          .map((id) => tagsData.tags.find((tag) => tag.id === id)?.name)
+          .filter((name): name is string => Boolean(name))
+      : undefined;
+
+  // Detect whether any prompt uses a tag-list placeholder ($tags / $aiTags / $userTags)
+  const allPromptTexts = (prompts ?? []).map((p) => p.text);
+  const needsTagExpansion = hasTagPlaceholder(allPromptTexts);
+
+  // Fetch all tags only when a placeholder is actually used (avoids an
+  // unnecessary round-trip for users who don't use this feature).
+  const { data: allTagsData } = useQuery(
+    api.tags.list.queryOptions({}, { enabled: needsTagExpansion }),
+  );
+
+  // Build a function that expands placeholders in a list of prompt texts.
+  const withTagsExpanded = React.useCallback(
+    (texts: string[]): string[] => {
+      if (!needsTagExpansion || !allTagsData?.tags) return texts;
+      return expandTagPlaceholders(texts, allTagsData.tags);
+    },
+    [needsTagExpansion, allTagsData],
+  );
 
   return (
     <SettingsSection
@@ -623,13 +817,17 @@ export function PromptDemo() {
           <code className="block whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-muted-foreground">
             {buildTextPromptUntruncated(
               inferredTagLang,
-              (prompts ?? [])
-                .filter(
-                  (p) => p.appliesTo == "text" || p.appliesTo == "all_tagging",
-                )
-                .map((p) => p.text),
+              withTagsExpanded(
+                (prompts ?? [])
+                  .filter(
+                    (p) =>
+                      p.appliesTo == "text" || p.appliesTo == "all_tagging",
+                  )
+                  .map((p) => p.text),
+              ),
               "\n<CONTENT_HERE>\n",
               tagStyle,
+              curatedTagNames,
             ).trim()}
           </code>
         </div>
@@ -640,13 +838,16 @@ export function PromptDemo() {
           <code className="block whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-muted-foreground">
             {buildImagePrompt(
               inferredTagLang,
-              (prompts ?? [])
-                .filter(
-                  (p) =>
-                    p.appliesTo == "images" || p.appliesTo == "all_tagging",
-                )
-                .map((p) => p.text),
+              withTagsExpanded(
+                (prompts ?? [])
+                  .filter(
+                    (p) =>
+                      p.appliesTo == "images" || p.appliesTo == "all_tagging",
+                  )
+                  .map((p) => p.text),
+              ),
               tagStyle,
+              curatedTagNames,
             ).trim()}
           </code>
         </div>
@@ -657,9 +858,11 @@ export function PromptDemo() {
           <code className="block whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-muted-foreground">
             {buildSummaryPromptUntruncated(
               inferredTagLang,
-              (prompts ?? [])
-                .filter((p) => p.appliesTo == "summary")
-                .map((p) => p.text),
+              withTagsExpanded(
+                (prompts ?? [])
+                  .filter((p) => p.appliesTo == "summary")
+                  .map((p) => p.text),
+              ),
               "\n<CONTENT_HERE>\n",
             ).trim()}
           </code>
@@ -672,22 +875,12 @@ export function PromptDemo() {
 export default function AISettings() {
   const { t } = useTranslation();
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-bold tracking-tight">
-        {t("settings.ai.ai_settings")}
-      </h2>
-
-      {/* AI Preferences */}
+    <SettingsPage title={t("settings.ai.ai_settings")}>
       <AIPreferences />
-
-      {/* Tag Style */}
       <TagStyleSelector />
-
-      {/* Tagging Rules */}
+      <CuratedTagsSelector />
       <TaggingRules />
-
-      {/* Prompt Preview */}
       <PromptDemo />
-    </div>
+    </SettingsPage>
   );
 }

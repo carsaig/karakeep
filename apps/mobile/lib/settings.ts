@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import * as SecureStore from "expo-secure-store";
 import { z } from "zod";
 import { create } from "zustand";
@@ -13,7 +14,7 @@ const zSettingsSchema = z.object({
   imageQuality: z.number().optional().default(0.2),
   theme: z.enum(["light", "dark", "system"]).optional().default("system"),
   defaultBookmarkView: z
-    .enum(["reader", "browser"])
+    .enum(["reader", "browser", "externalBrowser"])
     .optional()
     .default("reader"),
   showNotes: z.boolean().optional().default(false),
@@ -76,6 +77,12 @@ const useSettings = create<AppSettingsState>((set, get) => ({
 
 export default function useAppSettings() {
   const { settings, setSettings, load } = useSettings();
+
+  useEffect(() => {
+    if (settings.isLoading) {
+      load();
+    }
+  }, [load, settings.isLoading]);
 
   return { ...settings, setSettings, load };
 }

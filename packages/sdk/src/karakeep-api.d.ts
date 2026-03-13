@@ -189,6 +189,49 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/bookmarks/check-url": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Check if a URL exists in bookmarks
+     * @description Check if a URL is already bookmarked. Uses substring matching to find candidates, then normalizes URLs (ignoring hash fragments and trailing slashes) for exact comparison.
+     */
+    get: {
+      parameters: {
+        query: {
+          url: string;
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Object indicating whether the URL is bookmarked. bookmarkId is null if not found. */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": {
+              bookmarkId: string | null;
+            };
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/bookmarks/{bookmarkId}": {
     parameters: {
       query?: never;
@@ -470,6 +513,11 @@ export interface paths {
             tags: {
               tagId?: string;
               tagName?: string;
+              /**
+               * @default human
+               * @enum {string}
+               */
+              attachedBy?: "ai" | "human";
             }[];
           };
         };
@@ -520,6 +568,11 @@ export interface paths {
             tags: {
               tagId?: string;
               tagName?: string;
+              /**
+               * @default human
+               * @enum {string}
+               */
+              attachedBy?: "ai" | "human";
             }[];
           };
         };
@@ -696,6 +749,7 @@ export interface paths {
             assetType:
               | "linkHtmlContent"
               | "screenshot"
+              | "pdf"
               | "assetScreenshot"
               | "bannerImage"
               | "fullPageArchive"
@@ -703,6 +757,7 @@ export interface paths {
               | "bookmarkAsset"
               | "precrawledArchive"
               | "userUploaded"
+              | "avatar"
               | "unknown";
           };
         };
@@ -720,6 +775,7 @@ export interface paths {
               assetType:
                 | "linkHtmlContent"
                 | "screenshot"
+                | "pdf"
                 | "assetScreenshot"
                 | "bannerImage"
                 | "fullPageArchive"
@@ -727,6 +783,7 @@ export interface paths {
                 | "bookmarkAsset"
                 | "precrawledArchive"
                 | "userUploaded"
+                | "avatar"
                 | "unknown";
               fileName?: string | null;
             };
@@ -1781,6 +1838,7 @@ export interface paths {
               id: string;
               name?: string | null;
               email?: string | null;
+              image?: string | null;
               localUser: boolean;
             };
           };
@@ -2099,7 +2157,7 @@ export interface paths {
               backups: {
                 id: string;
                 userId: string;
-                assetId: string;
+                assetId: string | null;
                 createdAt: string;
                 size: number;
                 bookmarkCount: number;
@@ -2135,7 +2193,7 @@ export interface paths {
             "application/json": {
               id: string;
               userId: string;
-              assetId: string;
+              assetId: string | null;
               createdAt: string;
               size: number;
               bookmarkCount: number;
@@ -2184,7 +2242,7 @@ export interface paths {
             "application/json": {
               id: string;
               userId: string;
-              assetId: string;
+              assetId: string | null;
               createdAt: string;
               size: number;
               bookmarkCount: number;
@@ -2361,6 +2419,7 @@ export interface components {
             imageUrl?: string | null;
             imageAssetId?: string | null;
             screenshotAssetId?: string | null;
+            pdfAssetId?: string | null;
             fullPageArchiveAssetId?: string | null;
             precrawledArchiveAssetId?: string | null;
             videoAssetId?: string | null;
@@ -2368,6 +2427,8 @@ export interface components {
             htmlContent?: string | null;
             contentAssetId?: string | null;
             crawledAt?: string | null;
+            /** @enum {string|null} */
+            crawlStatus?: "success" | "failure" | "pending" | null;
             author?: string | null;
             publisher?: string | null;
             datePublished?: string | null;
@@ -2400,6 +2461,7 @@ export interface components {
         assetType:
           | "linkHtmlContent"
           | "screenshot"
+          | "pdf"
           | "assetScreenshot"
           | "bannerImage"
           | "fullPageArchive"
@@ -2407,6 +2469,7 @@ export interface components {
           | "bookmarkAsset"
           | "precrawledArchive"
           | "userUploaded"
+          | "avatar"
           | "unknown";
         fileName?: string | null;
       }[];

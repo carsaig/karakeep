@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "format": "prettier . --cache --ignore-path ../../.prettierignore --check",
-    "format:fix": "prettier . --cache --write --ignore-path ../../.prettierignore",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
     "lint": "oxlint .",
     "lint:fix": "oxlint . --fix",
     "test": "vitest"
@@ -21,7 +21,7 @@
     "@karakeep/shared": "workspace:*",
     "@karakeep/shared-server": "workspace:*",
     "@karakeep/trpc": "workspace:*",
-    "@trpc/server": "^11.4.3",
+    "@trpc/server": "^11.9.0",
     "drizzle-orm": "^0.44.2",
     "file-type": "^21.2.0",
     "hono": "^4.10.6",
@@ -30,13 +30,11 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@karakeep/prettier-config": "workspace:^0.1.0",
     "@karakeep/tsconfig": "workspace:^0.1.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/deep-equal": "^1.0.4",
     "@types/rss": "^0.0.32",
     "vite-tsconfig-paths": "^4.3.1",
     "vitest": "^3.2.4"
-  },
-  "prettier": "@karakeep/prettier-config"
+  }
 }
