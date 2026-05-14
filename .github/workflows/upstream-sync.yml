@@ -136,7 +136,7 @@ jobs:
 
       - name: Load GitHub PAT from 1Password
         if: steps.diffcheck.outputs.changed == 'true'
-        uses: 1password/load-secrets-action@v3
+        uses: 1password/load-secrets-action@v4
         with:
           export-env: true
         env:
