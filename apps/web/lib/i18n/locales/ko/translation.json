@@ -104,7 +104,8 @@
     "more": "더 보기",
     "replace_banner": "배너 교체",
     "add_banner": "배너 추가",
-    "download": "다운로드"
+    "download": "다운로드",
+    "rename": "이름 바꾸기"
   },
   "tags": {
     "unused_tags": "사용되지 않은 태그",
@@ -124,13 +125,17 @@
     "enter_tag_name": "태그 이름을 입력하세요",
     "sort_by_usage": "사용 빈도순으로 정렬",
     "sort_by_relevance": "관련성순으로 정렬",
-    "no_custom_tags": "아직 지정 태그가 없어",
-    "no_ai_tags": "아직 AI 태그가 없어",
+    "no_custom_tags": "아직 지정 태그가 없습니다",
+    "no_ai_tags": "아직 AI 태그가 없습니다",
     "no_unused_tags": "사용하지 않는 태그가 없습니다",
     "no_unused_tags_match_your_search": "검색어와 일치하는 사용하지 않는 태그가 없습니다",
     "no_tags_match_your_search": "검색어와 일치하는 태그가 없습니다",
     "search_placeholder": "태그 검색...",
-    "search_or_create_placeholder": "태그 검색 또는 생성..."
+    "search_or_create_placeholder": "태그 검색 또는 생성...",
+    "rename_tag": "태그 이름 바꾸기",
+    "items_count": "{{count}}개의 항목",
+    "attached_by_you": "사용자 생성 {{count}}개",
+    "attached_by_ai": "AI 생성 {{count}}개"
   },
   "search": {
     "is_favorited": "즐겨찾기 추가됨",
@@ -193,8 +198,8 @@
     "fetch_error_title": "콘텐츠를 사용할 수 없음",
     "fetch_error_description": "이 링크의 콘텐츠를 가져올 수 없습니다. 페이지가 보호되어 있거나 인증이 필요하거나 일시적으로 사용하지 못할 수 있습니다.",
     "crawling_in_progress": "페이지 콘텐츠 가져오는 중…",
-    "continue_reading": "이어서 하셈",
-    "continue_reading_percent": "이어서 하셈 ({{percent}}%)",
+    "continue_reading": "이어서 읽기",
+    "continue_reading_percent": "이어서 읽기 ({{percent}}%)",
     "continue_button": "계속"
   },
   "editor": {
@@ -282,7 +287,9 @@
     },
     "tags": {
       "created": "태그가 생성되었어요!",
-      "failed_to_create": "태그를 만드는 데 실패했습니다"
+      "failed_to_create": "태그를 만드는 데 실패했습니다",
+      "updated": "태그가 업데이트되었습니다!",
+      "failed_to_update": "태그 업데이트 실패"
     }
   },
   "cleanups": {
@@ -303,7 +310,97 @@
       "key_regenerated": "키가 성공적으로 다시 생성되었습니다",
       "key_regenerated_please_copy": "새로운 키를 복사해서 안전한 곳에 보관해 주세요. 예전 키는 폐기되었으므로 더 이상 작동하지 않습니다.",
       "regenerate_warning": "API 키 \"{{name}}\"을(를) 다시 생성하시겠습니까?",
-      "regenerate_confirmation": "현재 키를 폐기하고 새로운 키를 생성합니다. 현재 키를 사용하는 모든 애플리케이션은 작동을 멈추게 됩니다."
+      "regenerate_confirmation": "현재 키를 폐기하고 새로운 키를 생성합니다. 현재 키를 사용하는 모든 애플리케이션은 작동을 멈추게 됩니다.",
+      "scopes": {
+        "scopes": "범위",
+        "choose_at_least_one": "최소 하나 이상의 범위를 선택하거나 전체 액세스 권한을 선택하십시오.",
+        "scope_details": "{{scope}} 범위 상세 정보",
+        "access": {
+          "none": "없음",
+          "read": "읽기",
+          "readwrite": "읽기/쓰기"
+        },
+        "full_access": {
+          "label": "전체 액세스",
+          "description": "지원되는 모든 API 작업에 액세스합니다."
+        },
+        "limited_scopes": {
+          "label": "제한된 범위",
+          "description": "이 키가 액세스할 수 있는 리소스 유형을 선택하십시오."
+        },
+        "resources": {
+          "assets": {
+            "label": "에셋",
+            "description": "파일 및 기타 저장된 북마크 콘텐츠에 액세스합니다."
+          },
+          "backups": {
+            "label": "백업",
+            "description": "계정 백업을 관리합니다."
+          },
+          "bookmarks": {
+            "label": "북마크",
+            "description": "북마크를 액세스하고 관리합니다."
+          },
+          "feeds": {
+            "label": "피드",
+            "description": "RSS 피드 및 관련 피드 데이터를 관리합니다."
+          },
+          "highlights": {
+            "label": "하이라이트",
+            "description": "저장된 북마크 하이라이트를 관리합니다."
+          },
+          "lists": {
+            "label": "리스트",
+            "description": "리스트 및 리스트 구성원을 관리합니다."
+          },
+          "prompts": {
+            "label": "프롬프트",
+            "description": "저장된 AI 프롬프트 설정을 관리합니다."
+          },
+          "rules": {
+            "label": "규칙",
+            "description": "자동화 규칙에 액세스합니다."
+          },
+          "tags": {
+            "label": "태그",
+            "description": "태그를 액세스하고 수정합니다."
+          },
+          "users": {
+            "label": "사용자 계정",
+            "description": "계정 프로필 및 설정에 액세스합니다."
+          },
+          "webhooks": {
+            "label": "웹훅",
+            "description": "웹훅 설정에 액세스합니다."
+          },
+          "subscriptions": {
+            "label": "구독",
+            "description": "구독 관리에 액세스합니다."
+          },
+          "importSessions": {
+            "label": "세션 가져오기",
+            "description": "가져오기 세션에 액세스합니다."
+          }
+        },
+        "admin_resources": {
+          "bookmarks": {
+            "label": "관리자: 북마크",
+            "description": "관리용 북마크 도구에 액세스합니다."
+          },
+          "jobs": {
+            "label": "관리자: 작업",
+            "description": "백그라운드 작업 제어에 액세스합니다."
+          },
+          "system": {
+            "label": "관리자: 시스템",
+            "description": "시스템 상태 및 진단에 액세스합니다."
+          },
+          "users": {
+            "label": "관리자: 사용자",
+            "description": "관리 사용자 관리에 액세스합니다."
+          }
+        }
+      }
     },
     "webhooks": {
       "events": {
@@ -440,7 +537,9 @@
       "imported_bookmarks": "가져온 북마크",
       "import_bookmarks_from_tab_session_manager_export": "탭 세션 관리자에서 북마크 가져오기",
       "import_bookmarks_from_mymind_export": "마인드 내보내기에서 북마크 가져오기",
-      "import_bookmarks_from_instapaper_export": "Instapaper 내보내기에서 북마크 가져오기"
+      "import_bookmarks_from_instapaper_export": "Instapaper 내보내기에서 북마크 가져오기",
+      "import_bookmarks_from_readwise_reader_export": "Readwise Reader 내보내기에서 북마크 가져오기",
+      "import_bookmarks_from_onetab_export": "OneTab 내보내기에서 북마크 가져오기"
     },
     "back_to_app": "앱으로 돌아가기",
     "user_settings": "사용자 설정",
@@ -507,7 +606,8 @@
         "or": "다음 중 하나라도 참이면",
         "url_does_not_contain": "URL에 다음이 포함되지 않음",
         "title_contains": "제목에 다음 내용이 포함됨",
-        "title_does_not_contain": "제목에 다음 내용이 포함되지 않음"
+        "title_does_not_contain": "제목에 다음 내용이 포함되지 않음",
+        "bookmark_source_is": "북마크 소스:"
       }
     },
     "stats": {
@@ -583,7 +683,17 @@
       "approaching_quota_limit": "할당량 제한에 거의 도달했습니다",
       "loading_usage": "사용량 정보 로딩 중...",
       "free": "무료",
-      "paid": "유료"
+      "paid": "유료",
+      "monthly": "월간",
+      "yearly": "연간",
+      "per_month": "월",
+      "per_year": "년",
+      "excl_vat": "부가세 별도",
+      "yearly_savings": "{{percent}}% 절약",
+      "pro_feature_bookmarks": "북마크 50,000개",
+      "pro_feature_storage": "50GB 저장 공간",
+      "pro_feature_ai_tagging": "AI 기반 태그 지정",
+      "pro_feature_full_text_search": "전체 텍스트 검색"
     },
     "import_sessions": {
       "title": "세션 가져오기",
@@ -639,7 +749,10 @@
         "view_bookmark": "북마크 보기",
         "load_more": "더 불러오기",
         "no_title": "제목 없음"
-      }
+      },
+      "finalize_dialog_title": "가져오기 세션 완료",
+      "finalize_dialog_description": "\"{{name}}\"을(를) 백그라운드 작업 대기열에 추가할까요? 준비된 북마크 가져오기가 시작됩니다.",
+      "finalize_staging": "완료"
     },
     "backups": {
       "backups": "백업",
@@ -663,7 +776,7 @@
       "list": {
         "title": "내 백업",
         "create_backup_now": "지금 백업 만들기",
-        "no_backups": "아직 백업이 없어요. 자동 백업을 활성화하거나 수동으로 만드세요.",
+        "no_backups": "아직 백업이 없습니다. 자동 백업을 활성화하거나 수동으로 만드세요.",
         "table": {
           "created_at": "생성 날짜",
           "bookmarks": "즐겨찾기",
@@ -891,7 +1004,7 @@
     "share_list": "목록 공유",
     "delete_list": {
       "title": "목록 삭제",
-      "description": "목록을 삭제해도 해당 목록에 있는 북마크는 삭제되지 않아.",
+      "description": "목록을 삭제해도 해당 목록에 있는 북마크는 삭제되지 않습니다.",
       "delete_children": "자식 목록 삭제 (재귀적으로)",
       "delete_children_description": "선택하지 않으면 모든 직계 자식 목록이 루트 목록이 됨"
     },
@@ -916,9 +1029,9 @@
       "viewer_description": "목록에서 북마크를 볼 수 있음",
       "editor_description": "북마크를 추가 및 제거할 수 있음",
       "no_collaborators": "아직 협력자가 없습니다. 협업을 시작하려면 누군가를 추가하세요!",
-      "no_collaborators_readonly": "요 리스트에는 협업자가 없어.",
-      "people_with_access": "요 리스트에 접근할 수 있는 사람들",
-      "add_or_remove": "요 리스트에 접근할 수 있는 사람들을 추가/삭제해 줘",
+      "no_collaborators_readonly": "이 목록에는 협력자가 없습니다.",
+      "people_with_access": "이 목록에 접근할 수 있는 사람들",
+      "add_or_remove": "이 목록에 접근할 수 있는 사람을 추가하거나 삭제합니다",
       "invitation_sent": "초대장 전송 완료",
       "invitation_revoked": "초대 취소됨",
       "failed_to_revoke": "초대 취소 실패",
@@ -927,11 +1040,11 @@
       "declined": "거절됨"
     },
     "leave_list": {
-      "title": "리스트에서 나가기",
-      "confirm_message": "진짜 {{icon}} {{name}}에서 나가려고?",
-      "warning": "이제 이 리스트의 북마크를 보거나 접근할 수 없어. 리스트 주인이 필요하면 다시 추가해 줄 수 있어.",
-      "action": "리스트에서 나가기",
-      "success": "\"{icon}} {{name}}\"에서 나왔어."
+      "title": "목록에서 나가기",
+      "confirm_message": "{{icon}} {{name}}에서 나가시겠습니까?",
+      "warning": "이제 이 목록의 북마크를 보거나 접근할 수 없습니다. 목록 소유자가 필요하면 다시 추가할 수 있습니다.",
+      "action": "목록에서 나가기",
+      "success": "\"{{icon}} {{name}}\"에서 나왔습니다."
     },
     "invitations": {
       "pending": "초대 대기 중",
@@ -944,7 +1057,18 @@
       "failed_to_accept": "초대 수락 실패",
       "failed_to_decline": "초대 거절 실패"
     },
-    "shared_lists": "공유 목록"
+    "shared_lists": "공유 목록",
+    "privacy": {
+      "public": "공개",
+      "shared": "공유됨",
+      "private": "비공개"
+    },
+    "summary_list_one": "{{count}} 목록",
+    "summary_list_other": "{{count}} 목록",
+    "summary_bookmark_one": "{{count}} 북마크",
+    "summary_bookmark_other": "{{count}} 북마크",
+    "items_count_one": "{{count}}개의 항목",
+    "items_count_other": "{{count}}개의 항목"
   },
   "options": {
     "light_mode": "라이트 모드",
@@ -958,7 +1082,7 @@
   },
   "banners": {
     "no_bookmarks": {
-      "title": "아직 북마크가 없어요",
+      "title": "아직 북마크가 없습니다",
       "description": "나중에 빠르게 액세스할 수 있도록 흥미로운 기사, 링크 및 페이지를 저장하세요."
     }
   },

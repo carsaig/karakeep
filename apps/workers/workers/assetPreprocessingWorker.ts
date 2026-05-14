@@ -1,10 +1,10 @@
 import os from "os";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import PDFParser from "pdf2json";
 import { fromBuffer } from "pdf2pic";
 import { createWorker } from "tesseract.js";
-import { withWorkerTracing } from "workerTracing";
+import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
 
 import type { AssetPreprocessingRequest } from "@karakeep/shared-server";
 import { db } from "@karakeep/db";
@@ -15,6 +15,7 @@ import {
   bookmarks,
 } from "@karakeep/db/schema";
 import {
+  addLogFields,
   AssetPreprocessingQueue,
   OpenAIQueue,
   QuotaService,
@@ -39,7 +40,10 @@ export class AssetPreprocessingWorker {
       (await getQueueClient())!.createRunner<AssetPreprocessingRequest>(
         AssetPreprocessingQueue,
         {
-          run: withWorkerTracing("assetPreprocessingWorker.run", run),
+          run: withWorkerTracing(
+            "assetPreprocessingWorker.run",
+            withWorkerEventLog("assetPreprocessingWorker.run", run),
+          ),
           onComplete: async (job) => {
             workerStatsCounter.labels("assetPreprocessing", "completed").inc();
             const jobId = job.id;
@@ -59,6 +63,34 @@ export class AssetPreprocessingWorker {
             logger.error(
               `[assetPreprocessing][${jobId}] Asset preprocessing failed: ${job.error}\n${job.error.stack}`,
             );
+
+            const bookmarkId = job.data?.bookmarkId;
+            if (bookmarkId && job.numRetriesLeft == 0) {
+              await db.transaction(async (tx) => {
+                await tx
+                  .update(bookmarks)
+                  .set({
+                    taggingStatus: null,
+                  })
+                  .where(
+                    and(
+                      eq(bookmarks.id, bookmarkId),
+                      eq(bookmarks.taggingStatus, "pending"),
+                    ),
+                  );
+                await tx
+                  .update(bookmarks)
+                  .set({
+                    summarizationStatus: null,
+                  })
+                  .where(
+                    and(
+                      eq(bookmarks.id, bookmarkId),
+                      eq(bookmarks.summarizationStatus, "pending"),
+                    ),
+                  );
+              });
+            }
             return Promise.resolve();
           },
         },
@@ -110,7 +142,9 @@ async function readImageTextWithLLM(
     prompt,
     contentType,
     base64,
-    { schema: null },
+    {
+      schema: null,
+    },
   );
 
   const extractedText = response.response.trim();
@@ -339,6 +373,7 @@ async function run(req: DequeuedJob<AssetPreprocessingRequest>) {
   const isFixMode = req.data.fixMode;
   const jobId = req.id;
   const bookmarkId = req.data.bookmarkId;
+  addLogFields<"assetPreprocessingWorker.run">({ "bookmark.id": bookmarkId });
 
   const bookmark = await db.query.bookmarks.findFirst({
     where: eq(bookmarks.id, bookmarkId),
@@ -372,6 +407,14 @@ async function run(req: DequeuedJob<AssetPreprocessingRequest>) {
       `[assetPreprocessing][${jobId}] AssetId ${bookmark.asset.assetId} for bookmark ${bookmarkId} not found`,
     );
   }
+
+  addLogFields<"assetPreprocessingWorker.run">({
+    "user.id": bookmark.userId,
+    "asset.type": bookmark.asset.assetType,
+    "asset.size": asset.length,
+    "asset.content_type": metadata.contentType,
+    "preprocessing.fix_mode": isFixMode,
+  });
 
   let anythingChanged = false;
   switch (bookmark.asset.assetType) {
@@ -407,6 +450,10 @@ async function run(req: DequeuedJob<AssetPreprocessingRequest>) {
         `[assetPreprocessing][${jobId}] Unsupported bookmark type`,
       );
   }
+
+  addLogFields<"assetPreprocessingWorker.run">({
+    "preprocessing.changed": anythingChanged,
+  });
 
   // Propagate priority to child jobs
   const enqueueOpts: EnqueueOptions = {

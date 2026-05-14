@@ -12,3 +12,5 @@ To mitigate those risks, you can do one of the following:
 2. Let the browser traffic go through some VPN with restricted network policies.
 3. Host the browser container outside of your network.
 4. Use a hosted browser as a service (e.g. [browserless](https://browserless.io)). Note: I've never used them before.
+
+To mitigate some of the risks, Karakeep has basic Server-Side Request Forgery (SSRF) protections to avoid probing internal endpoints. However, those checks mitigate only some of the risks. If you want to harden your Karakeep instance, configure a crawler proxy that's running outside of your internal network.

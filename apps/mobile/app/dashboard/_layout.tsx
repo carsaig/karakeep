@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { AppState, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Stack } from "expo-router/stack";
+import { isIOS26 } from "@/lib/ios";
 import { useIsLoggedIn } from "@/lib/session";
 import { focusManager } from "@tanstack/react-query";
 
@@ -34,7 +35,7 @@ export default function Dashboard() {
         ...Platform.select({
           ios: {
             headerTransparent: true,
-            headerBlurEffect: "systemMaterial",
+            headerBlurEffect: isIOS26 ? undefined : "systemMaterial",
             headerLargeTitle: true,
             headerLargeTitleShadowVisible: false,
             headerLargeStyle: { backgroundColor: "transparent" },
@@ -93,6 +94,7 @@ export default function Dashboard() {
             default: "modal" as const,
           }),
           sheetGrabberVisible: true,
+          sheetExpandsWhenScrolledToEdge: false,
         }}
       />
       <Stack.Screen
@@ -106,6 +108,7 @@ export default function Dashboard() {
             default: "modal" as const,
           }),
           sheetGrabberVisible: true,
+          sheetExpandsWhenScrolledToEdge: false,
         }}
       />
       <Stack.Screen
@@ -157,15 +160,16 @@ export default function Dashboard() {
         }}
       />
       <Stack.Screen
-        name="search"
+        name="settings/index"
         options={{
-          headerTitle: "",
-          headerBackTitle: "",
-          headerShown: true,
+          headerTitle: "Settings",
           headerTransparent: false,
           headerLargeTitle: false,
-          animation: "fade_from_bottom",
-          animationDuration: 100,
+          presentation: Platform.select({
+            ios: "formSheet" as const,
+            default: "modal" as const,
+          }),
+          sheetGrabberVisible: true,
         }}
       />
       <Stack.Screen
@@ -189,6 +193,14 @@ export default function Dashboard() {
         options={{
           title: "Reader Settings",
           headerTitle: "Reader Settings",
+          headerBackTitle: "Back",
+        }}
+      />
+      <Stack.Screen
+        name="settings/toolbar-settings"
+        options={{
+          title: "Toolbar Buttons",
+          headerTitle: "Toolbar Buttons",
           headerBackTitle: "Back",
         }}
       />

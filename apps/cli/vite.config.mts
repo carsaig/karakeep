@@ -13,7 +13,7 @@ export default defineConfig({
         entryFileNames: "index.mjs",
         banner: "#!/usr/bin/env node",
       },
-      external: ["node:fs", "node:path", "node:url", "node:process"],
+      external: ["node:fs", "node:os", "node:path", "node:url", "node:process"],
     },
     ssr: true,
     target: "node18",
@@ -22,7 +22,7 @@ export default defineConfig({
     // bundle everything except for Node built-ins
     noExternal: /^(?!node:).*$/,
   },
-  plugins: [tsconfigPaths()],
+  plugins: [tsconfigPaths({ skip: (dir) => dir === ".claude" })],
   define: {
     "import.meta.env.CLI_VERSION": JSON.stringify(
       process.env.npm_package_version,

@@ -85,10 +85,10 @@ INFERENCE_IMAGE_MODEL=meta-llama/llama-4-scout
 ## Perplexity
 
 ```
-OPENAI_BASE_URL: https://api.perplexity.ai
-OPENAI_API_KEY: Your Perplexity API Key
-INFERENCE_TEXT_MODEL: sonar-pro
-INFERENCE_IMAGE_MODEL: sonar-pro
+OPENAI_BASE_URL=https://api.perplexity.ai
+OPENAI_API_KEY=YOUR_PERPLEXITY_API_KEY
+INFERENCE_TEXT_MODEL=sonar-pro
+INFERENCE_IMAGE_MODEL=sonar-pro
 ```
 
 ## Azure

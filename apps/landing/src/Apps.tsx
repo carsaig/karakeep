@@ -1,16 +1,18 @@
-import NavBar from "./Navbar";
 import appleIcon from "/apple-icon.svg?url";
 import chromeIcon from "/chrome-icon.svg?url";
 import firefoxIcon from "/firefox-icon.svg?url";
 import googlePlayIcon from "/google-play-icon.svg?url";
 import obsidianIcon from "/obsidian-icon.svg?url";
+import openclawIcon from "/openclaw-icon.svg?url";
 import raycastIcon from "/raycast-icon.svg?url";
+import safariIcon from "/safari-icon.svg?url";
 
 interface Listing {
   name: string;
   description: string;
   url: string;
-  badge: string;
+  badge?: string;
+  initials?: string;
 }
 
 const mobileApps: Listing[] = [
@@ -41,6 +43,12 @@ const browserExtensions: Listing[] = [
     url: "https://addons.mozilla.org/en-US/firefox/addon/karakeep/",
     badge: firefoxIcon,
   },
+  {
+    name: "Safari Extension",
+    description: "Save pages directly from Safari on macOS.",
+    url: "https://apps.apple.com/gb/app/karakeep-app/id6479258022?platform=mac",
+    badge: safariIcon,
+  },
 ];
 
 const communityProjects: Listing[] = [
@@ -55,6 +63,21 @@ const communityProjects: Listing[] = [
     description: "Sync your Karakeep bookmarks to Obsidian as markdown notes.",
     url: "https://obsidian.md/plugins?id=hoarder-sync",
     badge: obsidianIcon,
+  },
+];
+
+const agenticSkills: Listing[] = [
+  {
+    name: "ClawHub",
+    description: "Install the Karakeep skill for agentic assistants.",
+    url: "https://clawhub.ai/karakeep/karakeep-app",
+    badge: openclawIcon,
+  },
+  {
+    name: "skills.sh",
+    description: "Install with npx skills add karakeep-app/karakeep.",
+    url: "https://skills.sh/karakeep-app/karakeep/karakeep",
+    initials: "SH",
   },
 ];
 
@@ -81,11 +104,17 @@ function ListingSection({
             className="flex flex-row items-center gap-4 rounded-xl border border-gray-200 p-4 transition-colors hover:border-gray-300"
           >
             <div className="h-10 w-10 shrink-0">
-              <img
-                className="h-full w-full object-contain"
-                alt={item.name}
-                src={item.badge}
-              />
+              {item.badge ? (
+                <img
+                  className="h-full w-full object-contain"
+                  alt={item.name}
+                  src={item.badge}
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center rounded-lg bg-gray-900 text-xs font-semibold text-white">
+                  {item.initials}
+                </div>
+              )}
             </div>
             <div>
               <h3 className="font-semibold text-gray-900">{item.name}</h3>
@@ -100,35 +129,37 @@ function ListingSection({
 
 export default function Apps() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto pb-16">
-        <NavBar />
-        <main className="px-4 py-8 sm:px-6 sm:py-14">
-          <h1 className="text-4xl font-bold text-gray-900 sm:text-5xl">
-            Apps & Extensions
-          </h1>
-          <p className="mt-3 max-w-2xl text-base text-gray-600 sm:text-lg">
-            Use Karakeep anywhere with our mobile apps and browser extensions.
-          </p>
-          <div className="mt-10 space-y-6">
-            <ListingSection
-              title="Mobile Apps"
-              description="Take your bookmarks with you on iOS and Android."
-              items={mobileApps}
-            />
-            <ListingSection
-              title="Browser Extensions"
-              description="Save content from your browser in one click."
-              items={browserExtensions}
-            />
-            <ListingSection
-              title="Community Projects"
-              description="Integrations built by the Karakeep community."
-              items={communityProjects}
-            />
-          </div>
-        </main>
-      </div>
+    <div className="container mx-auto pb-16">
+      <main className="px-4 py-8 sm:px-6 sm:py-14">
+        <h1 className="text-4xl font-bold text-gray-900 sm:text-5xl">
+          Apps & Extensions
+        </h1>
+        <p className="mt-3 max-w-2xl text-base text-gray-600 sm:text-lg">
+          Use Karakeep anywhere with our mobile apps and browser extensions.
+        </p>
+        <div className="mt-10 space-y-6">
+          <ListingSection
+            title="Mobile Apps"
+            description="Take your bookmarks with you on iOS and Android."
+            items={mobileApps}
+          />
+          <ListingSection
+            title="Browser Extensions"
+            description="Save content from your browser in one click."
+            items={browserExtensions}
+          />
+          <ListingSection
+            title="Community Projects"
+            description="Integrations built by the Karakeep community."
+            items={communityProjects}
+          />
+          <ListingSection
+            title="Agentic Skills"
+            description="Connect AI assistants to Karakeep with installable skills."
+            items={agenticSkills}
+          />
+        </div>
+      </main>
     </div>
   );
 }

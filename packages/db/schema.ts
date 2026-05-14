@@ -13,6 +13,8 @@ import {
   unique,
 } from "drizzle-orm/sqlite-core";
 
+import type { ZApiKeyScope } from "@karakeep/shared/types/apiKeys";
+import { API_KEY_FULL_ACCESS_SCOPE } from "@karakeep/shared/types/apiKeys";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 
 function createdAtField() {
@@ -172,6 +174,10 @@ export const apiKeys = sqliteTable(
     lastUsedAt: integer("lastUsedAt", { mode: "timestamp" }),
     keyId: text("keyId").notNull().unique(),
     keyHash: text("keyHash").notNull(),
+    scopes: text("scopes", { mode: "json" })
+      .$type<ZApiKeyScope[]>()
+      .notNull()
+      .$defaultFn(() => [API_KEY_FULL_ACCESS_SCOPE]),
     userId: text("userId")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -621,6 +627,9 @@ export const rssFeedsTable = sqliteTable(
       .default(false),
     createdAt: createdAtField(),
     lastFetchedAt: integer("lastFetchedAt", { mode: "timestamp" }),
+    lastSuccessfulFetchAt: integer("lastSuccessfulFetchAt", {
+      mode: "timestamp",
+    }),
     lastFetchedStatus: text("lastFetchedStatus", {
       enum: ["pending", "failure", "success"],
     }).default("pending"),
@@ -730,8 +739,6 @@ export const ruleEngineRulesTable = sqliteTable(
     userId: text("userId")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-
-    listId: text("listId"),
     tagId: text("tagId"),
   },
   (rl) => [
@@ -742,11 +749,6 @@ export const ruleEngineRulesTable = sqliteTable(
       columns: [rl.userId, rl.tagId],
       foreignColumns: [bookmarkTags.userId, bookmarkTags.id],
       name: "ruleEngineRules_userId_tagId_fk",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [rl.userId, rl.listId],
-      foreignColumns: [bookmarkLists.userId, bookmarkLists.id],
-      name: "ruleEngineRules_userId_listId_fk",
     }).onDelete("cascade"),
   ],
 );
@@ -918,6 +920,7 @@ export const importStagingBookmarks = sqliteTable(
     tags: text("tags", { mode: "json" }).$type<string[]>(),
     listIds: text("listIds", { mode: "json" }).$type<string[]>(),
     sourceAddedAt: integer("sourceAddedAt", { mode: "timestamp" }),
+    archived: integer("archived", { mode: "boolean" }),
 
     // Processing state
     status: text("status", {

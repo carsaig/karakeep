@@ -19,17 +19,19 @@ import {
 } from "@karakeep/db/schema";
 import {
   AssetPreprocessingQueue,
+  buildCrawlIdempotencyKey,
   LinkCrawlerQueue,
   LowPriorityCrawlerQueue,
+  addLogFields,
+  logEvent,
   OpenAIQueue,
   QueuePriority,
   QuotaService,
-  triggerRuleEngineOnEvent,
   triggerSearchReindex,
-  triggerWebhook,
 } from "@karakeep/shared-server";
 import { SUPPORTED_BOOKMARK_ASSET_TYPES } from "@karakeep/shared/assetdb";
 import serverConfig from "@karakeep/shared/config";
+import { bookmarkCreationCounter } from "../stats";
 import { InferenceClientFactory } from "@karakeep/shared/inference";
 import { buildSummaryPrompt } from "@karakeep/shared/prompts.server";
 import { EnqueueOptions } from "@karakeep/shared/queueing";
@@ -52,10 +54,20 @@ import { ANCHOR_TEXT_MAX_LENGTH } from "@karakeep/shared/utils/reading-progress-
 import { normalizeTagName } from "@karakeep/shared/utils/tag";
 
 import type { AuthedContext } from "../index";
-import { authedProcedure, createRateLimitMiddleware, router } from "../index";
+import {
+  createEventLogMiddleware,
+  createRateLimitMiddleware,
+  createScopedAuthedProcedure,
+  emitRateLimitedEvent,
+  router,
+} from "../index";
+import { RuleEngine } from "../lib/ruleEngine";
 import { getBookmarkIdsFromMatcher } from "../lib/search";
 import { Asset } from "../models/assets";
 import { BareBookmark, Bookmark } from "../models/bookmarks";
+import { WebhooksService } from "../models/webhooks.service";
+
+const bookmarksProcedure = createScopedAuthedProcedure("bookmarks");
 
 export const ensureBookmarkOwnership = experimental_trpcMiddleware<{
   ctx: AuthedContext;
@@ -110,6 +122,34 @@ async function attemptToDedupLink(ctx: AuthedContext, url: string) {
   ).asZBookmark();
 }
 
+const BOOKMARKS_QUERIED_WINDOW_MS = 10 * 60 * 1000;
+
+function createBookmarksQueriedMiddleware<T>() {
+  return async function bookmarksQueriedMiddleware(opts: {
+    ctx: AuthedContext;
+    next: () => Promise<T>;
+  }) {
+    emitRateLimitedEvent(
+      "bookmarks.queried",
+      `bookmarks.queried:${opts.ctx.user.id}`,
+      BOOKMARKS_QUERIED_WINDOW_MS,
+      { "user.id": opts.ctx.user.id },
+    );
+    return opts.next();
+  };
+}
+
+function safeUrlHost(url: string | undefined): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
 const highBookmarkCreationRateLimitConfig = {
   name: "bookmarks.createBookmark.highVolume",
   windowMs: 5 * 60 * 1000,
@@ -141,7 +181,15 @@ async function shouldUseLowPriorityQueues(
 }
 
 export const bookmarksAppRouter = router({
-  createBookmark: authedProcedure
+  createBookmark: bookmarksProcedure
+    .use(
+      createRateLimitMiddleware({
+        name: "bookmarks.createBookmark",
+        windowMs: 60 * 1000,
+        maxRequests: 30,
+      }),
+    )
+    .use(createEventLogMiddleware("bookmark.create"))
     .input(zNewBookmarkRequestSchema)
     .output(
       zBookmarkSchema.merge(
@@ -151,10 +199,29 @@ export const bookmarksAppRouter = router({
       ),
     )
     .mutation(async ({ input, ctx }) => {
+      addLogFields<"bookmark.create">({
+        "bookmark.type": input.type,
+        "bookmark.source": input.source ?? undefined,
+        "bookmark.crawl_priority": input.crawlPriority,
+        ...(input.type === BookmarkTypes.LINK
+          ? {
+              "bookmark.url": input.url,
+              "bookmark.domain": safeUrlHost(input.url),
+              "bookmark.has_precrawled": !!input.precrawledArchiveId,
+            }
+          : {}),
+        ...(input.type === BookmarkTypes.ASSET
+          ? { "bookmark.asset_type": input.assetType }
+          : {}),
+      });
       if (input.type == BookmarkTypes.LINK) {
         // This doesn't 100% protect from duplicates because of races, but it's more than enough for this usecase.
         const alreadyExists = await attemptToDedupLink(ctx, input.url);
         if (alreadyExists) {
+          addLogFields<"bookmark.create">({
+            "bookmark.id": alreadyExists.id,
+            "bookmark.already_existed": true,
+          });
           return { ...alreadyExists, alreadyExists: true };
         }
       }
@@ -306,6 +373,12 @@ export const bookmarksAppRouter = router({
         },
       );
 
+      bookmarkCreationCounter.labels(input.source ?? "unknown").inc();
+      addLogFields<"bookmark.create">({
+        "bookmark.id": bookmark.id,
+        "bookmark.type": bookmark.content.type,
+      });
+
       const forceLowPriority = await shouldUseLowPriorityQueues(ctx);
       const shouldUseLowPriority =
         input.crawlPriority === "low" || forceLowPriority;
@@ -356,7 +429,8 @@ export const bookmarksAppRouter = router({
       }
 
       await Promise.all([
-        triggerRuleEngineOnEvent(
+        RuleEngine.triggerOnEvent(
+          bookmark.userId,
           bookmark.id,
           [
             {
@@ -364,19 +438,20 @@ export const bookmarksAppRouter = router({
             },
           ],
           enqueueOpts,
+          ctx.db,
         ),
         triggerSearchReindex(bookmark.id, enqueueOpts),
-        triggerWebhook(
+        new WebhooksService(ctx.db).triggerWebhook(
           bookmark.id,
           "created",
-          /* userId */ undefined,
+          bookmark.userId,
           enqueueOpts,
         ),
       ]);
       return bookmark;
     }),
 
-  updateBookmark: authedProcedure
+  updateBookmark: bookmarksProcedure
     .input(zUpdateBookmarksRequestSchema)
     .output(zBookmarkSchema)
     .use(ensureBookmarkOwnership)
@@ -516,8 +591,26 @@ export const bookmarksAppRouter = router({
         )
       ).asZBookmark();
 
+      if (input.archived !== undefined) {
+        logEvent({
+          "event.name": "bookmark.archive",
+          "bookmark.id": input.bookmarkId,
+          "user.id": ctx.user.id,
+          "bookmark.archived": input.archived,
+        });
+      }
+      if (input.favourited !== undefined) {
+        logEvent({
+          "event.name": "bookmark.favorite",
+          "bookmark.id": input.bookmarkId,
+          "user.id": ctx.user.id,
+          "bookmark.favorited": input.favourited,
+        });
+      }
+
       if (input.favourited === true || input.archived === true) {
-        await triggerRuleEngineOnEvent(
+        await RuleEngine.triggerOnEvent(
+          updatedBookmark.userId,
           input.bookmarkId,
           [
             ...(input.favourited === true ? ["favourited" as const] : []),
@@ -525,22 +618,29 @@ export const bookmarksAppRouter = router({
           ].map((t) => ({
             type: t,
           })),
+          undefined,
+          ctx.db,
         );
       }
       await Promise.all([
         triggerSearchReindex(input.bookmarkId, {
           groupId: ctx.user.id,
         }),
-        triggerWebhook(input.bookmarkId, "edited", ctx.user.id, {
-          groupId: ctx.user.id,
-        }),
+        new WebhooksService(ctx.db).triggerWebhook(
+          input.bookmarkId,
+          "edited",
+          updatedBookmark.userId,
+          {
+            groupId: ctx.user.id,
+          },
+        ),
       ]);
 
       return updatedBookmark;
     }),
 
   // DEPRECATED: use updateBookmark instead
-  updateBookmarkText: authedProcedure
+  updateBookmarkText: bookmarksProcedure
     .input(
       z.object({
         bookmarkId: z.string(),
@@ -577,20 +677,27 @@ export const bookmarksAppRouter = router({
         triggerSearchReindex(input.bookmarkId, {
           groupId: ctx.user.id,
         }),
-        triggerWebhook(input.bookmarkId, "edited", ctx.user.id, {
-          groupId: ctx.user.id,
-        }),
+        new WebhooksService(ctx.db).triggerWebhook(
+          input.bookmarkId,
+          "edited",
+          ctx.bookmark.userId,
+          {
+            groupId: ctx.user.id,
+          },
+        ),
       ]);
     }),
 
-  deleteBookmark: authedProcedure
+  deleteBookmark: bookmarksProcedure
+    .use(createEventLogMiddleware("bookmark.delete"))
     .input(z.object({ bookmarkId: z.string() }))
     .use(ensureBookmarkOwnership)
     .mutation(async ({ input, ctx }) => {
+      addLogFields<"bookmark.delete">({ "bookmark.id": input.bookmarkId });
       const bookmark = await Bookmark.fromId(ctx, input.bookmarkId, false);
       await bookmark.delete();
     }),
-  recrawlBookmark: authedProcedure
+  recrawlBookmark: bookmarksProcedure
     .use(
       createRateLimitMiddleware({
         name: "bookmarks.recrawlBookmark",
@@ -607,19 +714,18 @@ export const bookmarksAppRouter = router({
     )
     .use(ensureBookmarkOwnership)
     .mutation(async ({ input, ctx }) => {
-      await LowPriorityCrawlerQueue.enqueue(
-        {
-          bookmarkId: input.bookmarkId,
-          archiveFullPage: input.archiveFullPage,
-          storePdf: input.storePdf,
-        },
-        {
-          groupId: ctx.user.id,
-          priority: QueuePriority.Low,
-        },
-      );
+      const payload = {
+        bookmarkId: input.bookmarkId,
+        archiveFullPage: input.archiveFullPage,
+        storePdf: input.storePdf,
+      };
+      await LowPriorityCrawlerQueue.enqueue(payload, {
+        groupId: ctx.user.id,
+        priority: QueuePriority.Low,
+        idempotencyKey: buildCrawlIdempotencyKey(payload),
+      });
     }),
-  updateReadingProgress: authedProcedure
+  updateReadingProgress: bookmarksProcedure
     .input(
       z.object({
         bookmarkId: z.string(),
@@ -660,7 +766,7 @@ export const bookmarksAppRouter = router({
           },
         });
     }),
-  getReadingProgress: authedProcedure
+  getReadingProgress: bookmarksProcedure
     .input(
       z.object({
         bookmarkId: z.string(),
@@ -680,7 +786,8 @@ export const bookmarksAppRouter = router({
         readingProgressPercent: progress?.readingProgressPercent ?? null,
       };
     }),
-  getBookmark: authedProcedure
+  getBookmark: bookmarksProcedure
+    .use(createBookmarksQueriedMiddleware())
     .input(
       z.object({
         bookmarkId: z.string(),
@@ -694,7 +801,9 @@ export const bookmarksAppRouter = router({
         await Bookmark.fromId(ctx, input.bookmarkId, input.includeContent)
       ).asZBookmark();
     }),
-  searchBookmarks: authedProcedure
+  searchBookmarks: bookmarksProcedure
+    .use(createBookmarksQueriedMiddleware())
+    .use(createEventLogMiddleware("search.query"))
     .input(zSearchBookmarksRequestSchema)
     .output(
       z.object({
@@ -703,6 +812,9 @@ export const bookmarksAppRouter = router({
       }),
     )
     .query(async ({ input, ctx }) => {
+      addLogFields<"search.query">({
+        "search.has_query": input.text.length > 0,
+      });
       if (!input.limit) {
         input.limit = DEFAULT_NUM_BOOKMARKS_PER_PAGE;
       }
@@ -747,6 +859,10 @@ export const bookmarksAppRouter = router({
           : {}),
       });
 
+      addLogFields<"search.query">({
+        "search.results_count": resp.totalHits,
+      });
+
       if (resp.hits.length == 0) {
         return { bookmarks: [], nextCursor: null };
       }
@@ -784,7 +900,7 @@ export const bookmarksAppRouter = router({
               },
       };
     }),
-  checkUrl: authedProcedure
+  checkUrl: bookmarksProcedure
     .input(
       z.object({
         url: z.string(),
@@ -832,7 +948,8 @@ export const bookmarksAppRouter = router({
 
       return { bookmarkId: exactMatch?.id ?? null };
     }),
-  getBookmarks: authedProcedure
+  getBookmarks: bookmarksProcedure
+    .use(createBookmarksQueriedMiddleware())
     .input(zGetBookmarksRequestSchema)
     .output(zGetBookmarksResponseSchema)
     .query(async ({ input, ctx }) => {
@@ -843,7 +960,7 @@ export const bookmarksAppRouter = router({
       };
     }),
 
-  updateTags: authedProcedure
+  updateTags: bookmarksProcedure
     .input(
       z.object({
         bookmarkId: z.string(),
@@ -1012,27 +1129,38 @@ export const bookmarksAppRouter = router({
 
       if (res.numChanges > 0) {
         await Promise.allSettled([
-          triggerRuleEngineOnEvent(input.bookmarkId, [
-            ...res.detached.map((t) => ({
-              type: "tagRemoved" as const,
-              tagId: t,
-            })),
-            ...res.attached.map((t) => ({
-              type: "tagAdded" as const,
-              tagId: t,
-            })),
-          ]),
+          RuleEngine.triggerOnEvent(
+            ctx.bookmark.userId,
+            input.bookmarkId,
+            [
+              ...res.detached.map((t) => ({
+                type: "tagRemoved" as const,
+                tagId: t,
+              })),
+              ...res.attached.map((t) => ({
+                type: "tagAdded" as const,
+                tagId: t,
+              })),
+            ],
+            undefined,
+            ctx.db,
+          ),
           triggerSearchReindex(input.bookmarkId, {
             groupId: ctx.user.id,
           }),
-          triggerWebhook(input.bookmarkId, "edited", ctx.user.id, {
-            groupId: ctx.user.id,
-          }),
+          new WebhooksService(ctx.db).triggerWebhook(
+            input.bookmarkId,
+            "edited",
+            ctx.bookmark.userId,
+            {
+              groupId: ctx.user.id,
+            },
+          ),
         ]);
       }
       return res;
     }),
-  getBrokenLinks: authedProcedure
+  getBrokenLinks: bookmarksProcedure
     .output(
       z.object({
         bookmarks: z.array(
@@ -1080,7 +1208,7 @@ export const bookmarksAppRouter = router({
         })),
       };
     }),
-  summarizeBookmark: authedProcedure
+  summarizeBookmark: bookmarksProcedure
     .use(
       createRateLimitMiddleware({
         name: "bookmarks.summarizeBookmark",
@@ -1098,8 +1226,13 @@ export const bookmarksAppRouter = router({
         summary: z.string(),
       }),
     )
+    .use(createEventLogMiddleware("bookmark.summarize"))
     .use(ensureBookmarkOwnership)
     .mutation(async ({ input, ctx }) => {
+      addLogFields<"bookmark.summarize">({
+        "bookmark.id": input.bookmarkId,
+      });
+
       const inferenceClient = InferenceClientFactory.build();
       if (!inferenceClient) {
         throw new TRPCError({
@@ -1141,6 +1274,10 @@ Author: ${bookmark.author ?? ""}
         },
       });
 
+      addLogFields<"bookmark.summarize">({
+        "inference.prompt.custom_count": prompts.length,
+      });
+
       const userSettings = await ctx.db.query.users.findFirst({
         where: eq(users.id, ctx.user.id),
         columns: {
@@ -1155,6 +1292,10 @@ Author: ${bookmark.author ?? ""}
         serverConfig.inference.contextLength,
       );
 
+      addLogFields<"bookmark.summarize">({
+        "inference.prompt.size": Buffer.byteLength(summaryPrompt, "utf8"),
+      });
+
       const summary = await inferenceClient.inferFromText(summaryPrompt, {
         schema: null,
       });
@@ -1165,6 +1306,12 @@ Author: ${bookmark.author ?? ""}
           message: "Failed to summarize bookmark",
         });
       }
+
+      addLogFields<"bookmark.summarize">({
+        "inference.summary.size": Buffer.byteLength(summary.response, "utf8"),
+        "inference.total_tokens": summary.totalTokens,
+      });
+
       await ctx.db
         .update(bookmarks)
         .set({
@@ -1175,9 +1322,14 @@ Author: ${bookmark.author ?? ""}
         triggerSearchReindex(input.bookmarkId, {
           groupId: ctx.user.id,
         }),
-        triggerWebhook(input.bookmarkId, "edited", ctx.user.id, {
-          groupId: ctx.user.id,
-        }),
+        new WebhooksService(ctx.db).triggerWebhook(
+          input.bookmarkId,
+          "edited",
+          ctx.bookmark.userId,
+          {
+            groupId: ctx.user.id,
+          },
+        ),
       ]);
 
       return {

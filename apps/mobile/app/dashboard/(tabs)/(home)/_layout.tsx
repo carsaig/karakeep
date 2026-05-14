@@ -1,29 +1,21 @@
-import { Platform } from "react-native";
 import { Stack } from "expo-router/stack";
+import { tabScreenOptions } from "@/lib/tabScreenOptions";
+import { Platform } from "react-native";
+import { ProfileAvatarButton } from "@/components/settings/ProfileAvatarButton";
 
 export default function Layout() {
   return (
     <Stack
       screenOptions={{
+        ...tabScreenOptions,
         ...Platform.select({
           ios: {
-            headerLargeTitle: true,
-            headerTransparent: true,
-            headerBlurEffect: "systemMaterial",
-            headerLargeTitleShadowVisible: false,
-            headerLargeStyle: { backgroundColor: "transparent" },
+            headerRight: () => <ProfileAvatarButton />,
           },
           android: {
-            headerStyle: {
-              backgroundColor: "transparent",
-            },
-            contentStyle: {
-              // Manual padding to avoid the native tabbar until expo fixes this in sdk 55.
-              paddingBottom: 100,
-            },
+            headerShown: false,
           },
         }),
-        headerShadowVisible: false,
       }}
     >
       <Stack.Screen name="index" options={{ title: "Home" }} />

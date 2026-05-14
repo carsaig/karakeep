@@ -20,7 +20,7 @@ import {
   importSessions,
   importStagingBookmarks,
 } from "@karakeep/db/schema";
-import { LowPriorityCrawlerQueue, OpenAIQueue } from "@karakeep/shared-server";
+import { addLogFields, withEventLog } from "@karakeep/shared-server";
 import logger, { throttledLogger } from "@karakeep/shared/logger";
 import {
   BookmarkTypes,
@@ -378,11 +378,13 @@ export class ImportWorker {
         ?.trim()
         .substring(0, MAX_BOOKMARK_TITLE_LENGTH);
 
-      const baseRequest = {
+      const baseRequest: Partial<CreateBookmarkInput> = {
         title: normalizedTitle || undefined,
         note: staged.note ?? undefined,
         createdAt: staged.sourceAddedAt ?? undefined,
         crawlPriority: "low" as const,
+        archived: staged.archived ?? false,
+        source: "import",
       };
 
       let bookmarkRequest: CreateBookmarkInput;
@@ -504,13 +506,35 @@ export class ImportWorker {
         );
 
       if (remaining[0]?.count === 0) {
-        logger.info(
-          `[import] Session ${sessionId} completed, all items processed`,
-        );
-        await db
-          .update(importSessions)
-          .set({ status: "completed" })
-          .where(eq(importSessions.id, sessionId));
+        await withEventLog("bookmark.import", async () => {
+          logger.info(
+            `[import] Session ${sessionId} completed, all items processed`,
+          );
+          await db
+            .update(importSessions)
+            .set({ status: "completed" })
+            .where(eq(importSessions.id, sessionId));
+          const session = await db.query.importSessions.findFirst({
+            where: eq(importSessions.id, sessionId),
+            columns: { userId: true, name: true },
+          });
+          const acceptedCount = await db
+            .select({ count: count() })
+            .from(importStagingBookmarks)
+            .where(
+              and(
+                eq(importStagingBookmarks.importSessionId, sessionId),
+                eq(importStagingBookmarks.result, "accepted"),
+              ),
+            );
+          if (session) {
+            addLogFields<"bookmark.import">({
+              "user.id": session.userId,
+              "import.source": session.name,
+              "import.count": acceptedCount[0]?.count ?? 0,
+            });
+          }
+        });
       }
     }
   }
@@ -626,33 +650,23 @@ export class ImportWorker {
   }
 
   /**
-   * Backpressure: Calculate available capacity based on number of items in flight and the health of the import queues.
+   * Backpressure: Calculate available capacity based on number of items currently processing.
    */
   private async getAvailableCapacity(): Promise<number> {
-    const [processingCount, crawlerQueue, openaiQueue] = await Promise.all([
-      db
-        .select({ count: count() })
-        .from(importStagingBookmarks)
-        .where(
-          and(
-            eq(importStagingBookmarks.status, "processing"),
-            gt(
-              importStagingBookmarks.processingStartedAt,
-              new Date(Date.now() - this.staleThresholdMs),
-            ),
+    const processingCount = await db
+      .select({ count: count() })
+      .from(importStagingBookmarks)
+      .where(
+        and(
+          eq(importStagingBookmarks.status, "processing"),
+          gt(
+            importStagingBookmarks.processingStartedAt,
+            new Date(Date.now() - this.staleThresholdMs),
           ),
         ),
-      LowPriorityCrawlerQueue.stats(),
-      OpenAIQueue.stats(),
-    ]);
+      );
 
-    const crawlerTotal =
-      crawlerQueue.pending + crawlerQueue.running + crawlerQueue.pending_retry;
-    const openaiTotal =
-      openaiQueue.pending + openaiQueue.running + openaiQueue.pending_retry;
-    const processingTotal = processingCount[0]?.count ?? 0;
-
-    const inFlight = Math.max(crawlerTotal, openaiTotal, processingTotal);
+    const inFlight = processingCount[0]?.count ?? 0;
     importStagingInFlightGauge.set(inFlight);
 
     return this.maxInFlight - inFlight;

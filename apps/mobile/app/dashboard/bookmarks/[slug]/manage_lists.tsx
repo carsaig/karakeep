@@ -107,7 +107,7 @@ const ListPickerPage = () => {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-        className="bg-background"
+        className="flex-1 bg-background"
       >
         {filteredPaths && filteredPaths.length > 0 ? (
           <View

@@ -185,7 +185,7 @@ const TagPickerPage = () => {
             <Pressable
               onPress={clearAllTags}
               disabled={optimisticTags.length === 0}
-              className={optimisticTags.length === 0 ? "opacity-50" : ""}
+              className={`px-2 ${optimisticTags.length === 0 ? "opacity-50" : ""}`}
             >
               <Text className="text-primary">Clear</Text>
             </Pressable>
@@ -196,7 +196,7 @@ const TagPickerPage = () => {
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: 16, gap: 20, paddingBottom: 40 }}
-        className="bg-background"
+        className="flex-1 bg-background"
       >
         {filteredOptimisticTags.length > 0 && (
           <GroupedSection header="Attached">
