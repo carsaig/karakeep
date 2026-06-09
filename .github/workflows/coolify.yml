@@ -42,17 +42,18 @@ jobs:
           set -euo pipefail
           # coolify.certain.cc is served by an override resolver only reachable
           # from inside the tailnet, and systemd-resolved on the runner can
-          # interfere with --accept-dns. Pin the mapping via /etc/hosts using
-          # the tailnet IP of the zurich host (which serves Coolify via Traefik).
-          ZURICH_IP=$(tailscale ip -4 zurich | head -1)
-          if [ -z "$ZURICH_IP" ]; then
-            echo "::error::Could not resolve zurich via tailscale ip — check MagicDNS / host alias"
-            tailscale status || true
+          # interfere with --accept-dns. Extract the zurich tailnet IP directly
+          # from the local tailscaled API (no DNS lookups) and pin it in /etc/hosts.
+          ZURICH_IP=$(sudo tailscale status --json \
+            | jq -r '.Peer | to_entries[] | select(.value.HostName == "zurich") | .value.TailscaleIPs[0]')
+          if [ -z "$ZURICH_IP" ] || [ "$ZURICH_IP" = "null" ]; then
+            echo "::error::Could not find peer 'zurich' in tailscale status. Peers seen:"
+            sudo tailscale status --json | jq -r '.Peer | to_entries[] | .value.HostName' || true
             exit 1
           fi
           echo "Resolved zurich -> $ZURICH_IP"
           echo "$ZURICH_IP coolify.certain.cc" | sudo tee -a /etc/hosts
-          # Sanity: prove resolution + TLS handshake before the real API calls
+          # Sanity: prove resolution + TCP handshake before the real API calls
           curl -sS --max-time 10 -o /dev/null -w "Sanity probe: HTTP %{http_code}\n" \
             "https://coolify.certain.cc/" || {
               echo "::error::Sanity probe failed — routing or ACL issue"
