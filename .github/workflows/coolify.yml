@@ -37,6 +37,28 @@ jobs:
           tags: tag:ci
           args: --accept-dns=true
 
+      - name: Resolve coolify host via tailnet
+        run: |
+          set -euo pipefail
+          # coolify.certain.cc is served by an override resolver only reachable
+          # from inside the tailnet, and systemd-resolved on the runner can
+          # interfere with --accept-dns. Pin the mapping via /etc/hosts using
+          # the tailnet IP of the zurich host (which serves Coolify via Traefik).
+          ZURICH_IP=$(tailscale ip -4 zurich | head -1)
+          if [ -z "$ZURICH_IP" ]; then
+            echo "::error::Could not resolve zurich via tailscale ip — check MagicDNS / host alias"
+            tailscale status || true
+            exit 1
+          fi
+          echo "Resolved zurich -> $ZURICH_IP"
+          echo "$ZURICH_IP coolify.certain.cc" | sudo tee -a /etc/hosts
+          # Sanity: prove resolution + TLS handshake before the real API calls
+          curl -sS --max-time 10 -o /dev/null -w "Sanity probe: HTTP %{http_code}\n" \
+            "https://coolify.certain.cc/" || {
+              echo "::error::Sanity probe failed — routing or ACL issue"
+              exit 1
+            }
+
       - name: Check current deployed version
         id: current
         run: |
