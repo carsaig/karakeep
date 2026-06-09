@@ -1,6 +1,6 @@
 services:
   web:
-    image: ${WEB_IMAGE:-ghcr.io/karakeep-app/karakeep:release}
+    image: ${WEB_IMAGE:?WEB_IMAGE must be set in Coolify env, e.g. ghcr.io/karakeep-app/karakeep:0.32.0}
     restart: unless-stopped
     volumes:
       - data:/data
