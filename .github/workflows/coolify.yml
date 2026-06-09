@@ -19,7 +19,7 @@ jobs:
           echo "Latest upstream version: ${LATEST_TAG}"
 
       - name: Load Coolify secrets from 1Password
-        uses: 1password/load-secrets-action@v3
+        uses: 1password/load-secrets-action@v4
         with:
           export-env: true
         env:
