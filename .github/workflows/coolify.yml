@@ -29,18 +29,32 @@ jobs:
           COOLIFY_BASE_URL: op://SECRETS/Coolify/BASE_URL
           COOLIFY_APPLICATION_UUID: op://SECRETS/Karakeep Bookmarks/APPLICATION_UUID
 
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
       - name: Check current deployed version
         id: current
-        continue-on-error: true
         run: |
-          RESPONSE=$(curl -s \
+          set -euo pipefail
+          HTTP_CODE=$(curl -sS -o /tmp/envs.json -w "%{http_code}" \
             -H "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" \
-            "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs")
+            "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs") || {
+              echo "::error::Coolify API unreachable. Verify Tailscale connection and ACL grant for tag:ci."
+              exit 1
+            }
 
-          CURRENT_VERSION=$(echo "$RESPONSE" | jq -r '([.[] | select(.key == "SERVER_VERSION")] | first | .value) // "unknown"' 2>/dev/null | tr -d '\r\n')
-          if [ -z "$CURRENT_VERSION" ]; then
-            CURRENT_VERSION="unknown"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Coolify API returned HTTP $HTTP_CODE"
+            cat /tmp/envs.json
+            exit 1
           fi
+
+          CURRENT_VERSION=$(jq -r '([.[] | select(.key == "SERVER_VERSION")] | first | .value) // "unknown"' /tmp/envs.json | tr -d '\r\n')
+          [ -z "$CURRENT_VERSION" ] && CURRENT_VERSION="unknown"
           echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Current deployed version: ${CURRENT_VERSION}"
 
@@ -63,10 +77,11 @@ jobs:
       - name: Update Coolify environment variables
         if: steps.decision.outputs.skip != 'true'
         run: |
+          set -euo pipefail
           VERSION="${{ steps.upstream.outputs.version }}"
           IMAGE="ghcr.io/karakeep-app/karakeep:${VERSION}"
 
-          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
+          HTTP_CODE=$(curl -sS -o /tmp/patch.json -w "%{http_code}" \
             -X PATCH "${COOLIFY_BASE_URL}/api/v1/applications/${COOLIFY_APPLICATION_UUID}/envs/bulk" \
             -H "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN" \
             -H "Content-Type: application/json" \
@@ -75,10 +90,10 @@ jobs:
                 {\"key\": \"WEB_IMAGE\", \"value\": \"${IMAGE}\", \"is_preview\": false},
                 {\"key\": \"SERVER_VERSION\", \"value\": \"${VERSION}\", \"is_preview\": false}
               ]
-            }")
-
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
-          RESPONSE_BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d')
+            }") || {
+              echo "::error::Coolify API unreachable during PATCH"
+              exit 1
+            }
 
           if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
             echo "Environment variables updated successfully"
@@ -86,16 +101,27 @@ jobs:
             echo "**WEB_IMAGE:** \`${IMAGE}\`" >> $GITHUB_STEP_SUMMARY
             echo "**SERVER_VERSION:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
           else
-            echo "Failed to update environment variables. HTTP Code: $HTTP_CODE"
-            echo "Response: $RESPONSE_BODY"
+            echo "::error::Failed to update environment variables. HTTP Code: $HTTP_CODE"
+            cat /tmp/patch.json
             exit 1
           fi
 
       - name: Trigger Coolify deployment
         if: steps.decision.outputs.skip != 'true'
         run: |
-          curl --request GET "$COOLIFY_WEBHOOK_URL" \
-            --header "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN"
+          set -euo pipefail
+          HTTP_CODE=$(curl -sS -o /tmp/webhook.txt -w "%{http_code}" \
+            --request GET "$COOLIFY_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_DEPLOYMENT_TOKEN") || {
+              echo "::error::Coolify webhook unreachable"
+              exit 1
+            }
+
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+            echo "::error::Webhook returned HTTP $HTTP_CODE"
+            cat /tmp/webhook.txt
+            exit 1
+          fi
 
           echo "## Deployment Triggered" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** \`${{ steps.upstream.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
