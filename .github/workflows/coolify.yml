@@ -37,28 +37,24 @@ jobs:
           tags: tag:ci
           args: --accept-dns=true
 
-      - name: Resolve coolify host via tailnet
+      - name: Pin coolify host to tailnet IP
         run: |
           set -euo pipefail
-          # coolify.certain.cc is served by an override resolver only reachable
-          # from inside the tailnet, and systemd-resolved on the runner can
-          # interfere with --accept-dns. Extract the zurich tailnet IP directly
-          # from the local tailscaled API (no DNS lookups) and pin it in /etc/hosts.
-          ZURICH_IP=$(sudo tailscale status --json \
-            | jq -r '.Peer | to_entries[] | select(.value.HostName == "zurich") | .value.TailscaleIPs[0]')
-          if [ -z "$ZURICH_IP" ] || [ "$ZURICH_IP" = "null" ]; then
-            echo "::error::Could not find peer 'zurich' in tailscale status. Peers seen:"
-            sudo tailscale status --json | jq -r '.Peer | to_entries[] | .value.HostName' || true
+          # coolify.certain.cc lives only in the tailnet's override resolver,
+          # and systemd-resolved on the GH runner doesn't see it even with
+          # --accept-dns=true. Pin to zurich's tailnet IP via /etc/hosts.
+          # Source of truth: https://github.com/carsaig/tailscale/blob/main/policy.hujson
+          # ("hosts" block — zurich entry). Tailscale IPs are stable per-node.
+          ZURICH_IP="100.125.201.8"
+          echo "$ZURICH_IP coolify.certain.cc" | sudo tee -a /etc/hosts
+          # Sanity probe — proves /etc/hosts pin + tailnet route + ACL grant
+          HTTP_CODE=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" \
+            "https://coolify.certain.cc/" || echo "FAIL")
+          echo "Sanity probe to coolify.certain.cc returned: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "FAIL" ]; then
+            echo "::error::Could not reach coolify.certain.cc via tailnet. Check ACL grant for tag:ci -> host:zurich:tcp:443."
             exit 1
           fi
-          echo "Resolved zurich -> $ZURICH_IP"
-          echo "$ZURICH_IP coolify.certain.cc" | sudo tee -a /etc/hosts
-          # Sanity: prove resolution + TCP handshake before the real API calls
-          curl -sS --max-time 10 -o /dev/null -w "Sanity probe: HTTP %{http_code}\n" \
-            "https://coolify.certain.cc/" || {
-              echo "::error::Sanity probe failed — routing or ACL issue"
-              exit 1
-            }
 
       - name: Check current deployed version
         id: current
